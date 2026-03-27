@@ -174,12 +174,94 @@ def _functionSyntax(memberElement: etree._Element) -> str:  # type: ignore[name-
 	return "{} {}{}".format(returnType, functionName, argumentsString)
 
 
+def _parseParTitleSegments(titleText: str) -> list[tuple[str, str]]:
+	"""Parse a combined par-title string into (sectionTitle, sectionContent) pairs.
+
+	The doxygen preprocessor combines multiple ``\\par`` entries into a single
+	``<simplesect kind="par">`` whose title has the format::
+
+	    Title1\\n Content1\\n \\par Title2\\n Content2\\n ...
+
+	where ``\\n`` and ``\\par`` are literal two-character sequences in the XML
+	text content (not actual newline or Doxygen command characters).
+	"""
+	segments = titleText.split("\\n \\par ")
+	result: list[tuple[str, str]] = []
+	for segment in segments:
+		parts = segment.split("\\n", 1)
+		sectionTitle = parts[0].strip()
+		if not sectionTitle:
+			continue
+		sectionContent = parts[1].replace("\\n", " ").strip() if len(parts) > 1 else ""
+		result.append((sectionTitle, sectionContent))
+	return result
+
+
+def _getBlueprintInfo(element: etree._Element) -> list[tuple[str, str]]:  # type: ignore[name-defined]
+	"""Return Blueprint-related (sectionTitle, sectionContent) pairs from element.
+
+	Searches the element's ``<detaileddescription>`` for ``<simplesect kind="par">``
+	entries whose parsed title starts with ``"Blueprint"``.  Works for both
+	``memberdef`` and ``compounddef`` elements.
+	"""
+	result: list[tuple[str, str]] = []
+	detailedDescription = element.find("detaileddescription")
+	if detailedDescription is None:
+		return result
+	for simplesect in detailedDescription.iter("simplesect"):
+		if simplesect.get("kind") != "par":
+			continue
+		titleElement = simplesect.find("title")
+		if titleElement is None:
+			continue
+		titleText = (titleElement.text or "").strip()
+		for sectionTitle, sectionContent in _parseParTitleSegments(titleText):
+			if sectionTitle.startswith("Blueprint"):
+				result.append((sectionTitle, sectionContent))
+	return result
+
+
+def _isBlueprintAccessible(blueprintInfo: list[tuple[str, str]]) -> bool:
+	"""Return True if blueprintInfo contains at least one positive Blueprint access specifier.
+
+	Excludes entries that explicitly restrict Blueprint access, such as
+	``"Not Blueprintable"``, ``"Not BlueprintType"``, and
+	``"Native only — not accessible to non-native Blueprints"``.
+	"""
+	for _, sectionContent in blueprintInfo:
+		if sectionContent.startswith("Not "):
+			continue
+		if "not accessible to non-native Blueprints" in sectionContent:
+			continue
+		return True
+	return False
+
+
+def _blueprintSection(blueprintInfo: list[tuple[str, str]]) -> str:
+	"""Build the ``## Blueprint`` section markdown for a member or class page.
+
+	Returns an empty string when blueprintInfo is empty.
+	"""
+	if not blueprintInfo:
+		return ""
+	lines: list[str] = ["## Blueprint", ""]
+	for sectionTitle, sectionContent in blueprintInfo:
+		if sectionContent:
+			lines.append("**{}:** {}".format(sectionTitle, sectionContent))
+		else:
+			lines.append("**{}**".format(sectionTitle))
+		lines.append("")
+	return "\n".join(lines)
+
+
 def _functionPage(memberElement: etree._Element, compoundName: str) -> str:  # type: ignore[name-defined]
 	"""Build a Markdown page for a single (non-overloaded) member function."""
 	functionName = _getText(memberElement.find("name"))
 	returnType = _getText(memberElement.find("type"))
-	# Collect return description before _description() processes the tree.
+	# Collect return description and Blueprint info before _description() removes
+	# <simplesect> elements from the detaileddescription tree.
 	returnDescription = _getReturnDescription(memberElement)
+	blueprintInfo = _getBlueprintInfo(memberElement)
 	brief = _description(memberElement.find("briefdescription"))
 	detail = _description(memberElement.find("detaileddescription"))
 	parameterList = _collectParams(memberElement)
@@ -209,6 +291,10 @@ def _functionPage(memberElement: etree._Element, compoundName: str) -> str:  # t
 			lines += [returnDescription, ""]
 		else:
 			lines += ["`{}`".format(returnType), ""]
+
+	blueprintText = _blueprintSection(blueprintInfo)
+	if blueprintText:
+		lines += [blueprintText, ""]
 
 	if detail:
 		lines += ["## Remarks", "", detail, ""]
@@ -247,8 +333,10 @@ def _functionOverloadsPage(
 		returnType = _getText(memberElement.find("type"))
 		syntax = _functionSyntax(memberElement)
 		parameterList = _collectParams(memberElement)
-		# Collect return description before _description() processes the tree.
+		# Collect return description and Blueprint info before _description() removes
+		# <simplesect> elements from the detaileddescription tree.
 		returnDescription = _getReturnDescription(memberElement)
+		blueprintInfo = _getBlueprintInfo(memberElement)
 		brief = _description(memberElement.find("briefdescription"))
 		detail = _description(memberElement.find("detaileddescription"))
 
@@ -267,6 +355,10 @@ def _functionOverloadsPage(
 			else:
 				lines += ["`{}`".format(returnType), ""]
 
+		blueprintText = _blueprintSection(blueprintInfo)
+		if blueprintText:
+			lines += [blueprintText, ""]
+
 		if detail:
 			lines += ["**Remarks**", "", detail, ""]
 
@@ -278,6 +370,8 @@ def _propertyPage(memberElement: etree._Element, compoundName: str) -> str:  # t
 	variableName = _getText(memberElement.find("name"))
 	variableType = _getText(memberElement.find("type"))
 	definition = _getText(memberElement.find("definition"))
+	# Collect Blueprint info before _description() removes <simplesect> elements.
+	blueprintInfo = _getBlueprintInfo(memberElement)
 	brief = _description(memberElement.find("briefdescription"))
 	detail = _description(memberElement.find("detaileddescription"))
 
@@ -296,6 +390,10 @@ def _propertyPage(memberElement: etree._Element, compoundName: str) -> str:  # t
 
 	syntax = definition if definition else "{} {}".format(variableType, variableName)
 	lines += ["## Declaration", "", _codeBlock(syntax), ""]
+
+	blueprintText = _blueprintSection(blueprintInfo)
+	if blueprintText:
+		lines += [blueprintText, ""]
 
 	if detail:
 		lines += ["## Remarks", "", detail, ""]
@@ -324,10 +422,13 @@ def _classIndexPage(
 	compoundDetail: str,
 	functionBriefs: dict[str, str],
 	functionSignatures: dict[str, list[str]],
+	functionBlueprintAccessible: dict[str, bool],
 	propertyBriefs: dict[str, str],
 	propertyTypes: dict[str, str],
+	propertyBlueprintAccessible: dict[str, bool],
 	delegateBriefs: dict[str, str],
 	delegateTypes: dict[str, str],
+	delegateBlueprintAccessible: dict[str, bool],
 ) -> str:
 	"""Build the index page for a class / struct."""
 	lines: list[str] = ["# {}".format(className), ""]
@@ -340,32 +441,39 @@ def _classIndexPage(
 	if compoundDetail:
 		lines += ["## Remarks", "", compoundDetail, ""]
 
+	classBlueprintText = _blueprintSection(_getBlueprintInfo(compoundElement))
+	if classBlueprintText:
+		lines += [classBlueprintText, ""]
+
 	if functionBriefs:
 		rows = [
-			"| Method | Signature | Description |",
-			"|--------|-----------|-------------|",
+			"| Method | Signature | Description | Blueprint |",
+			"|--------|-----------|-------------|-----------|",
 		]
 		for name in sorted(functionBriefs):
 			signatureCell = "<br>".join("`{}`".format(sig) for sig in functionSignatures.get(name, []))
-			rows.append("| [{}]({}.md) | {} | {} |".format(name, name, signatureCell, functionBriefs[name]))
+			blueprintCell = "yes" if functionBlueprintAccessible.get(name) else ""
+			rows.append("| [{}]({}.md) | {} | {} | {} |".format(name, name, signatureCell, functionBriefs[name], blueprintCell))
 		lines += ["## Methods", "", "\n".join(rows), ""]
 
 	if propertyBriefs:
 		rows = [
-			"| Property | Type | Description |",
-			"|----------|------|-------------|",
+			"| Property | Type | Description | Blueprint |",
+			"|----------|------|-------------|-----------|",
 		]
 		for name in sorted(propertyBriefs):
-			rows.append("| [{}]({}.md) | `{}` | {} |".format(name, name, propertyTypes.get(name, ""), propertyBriefs[name]))
+			blueprintCell = "yes" if propertyBlueprintAccessible.get(name) else ""
+			rows.append("| [{}]({}.md) | `{}` | {} | {} |".format(name, name, propertyTypes.get(name, ""), propertyBriefs[name], blueprintCell))
 		lines += ["## Properties", "", "\n".join(rows), ""]
 
 	if delegateBriefs:
 		rows = [
-			"| Delegate | Type | Description |",
-			"|----------|------|-------------|",
+			"| Delegate | Type | Description | Blueprint |",
+			"|----------|------|-------------|-----------|",
 		]
 		for name in sorted(delegateBriefs):
-			rows.append("| [{}]({}.md) | `{}` | {} |".format(name, name, delegateTypes.get(name, ""), delegateBriefs[name]))
+			blueprintCell = "yes" if delegateBlueprintAccessible.get(name) else ""
+			rows.append("| [{}]({}.md) | `{}` | {} | {} |".format(name, name, delegateTypes.get(name, ""), delegateBriefs[name], blueprintCell))
 		lines += ["## Delegates", "", "\n".join(rows), ""]
 
 	return "\n".join(lines)
@@ -451,10 +559,13 @@ def processCompound(
 	functionGroups: dict[str, list[etree._Element]] = {}  # type: ignore[name-defined]
 	functionBriefs: dict[str, str] = {}
 	functionSignatures: dict[str, list[str]] = {}
+	functionBlueprintAccessible: dict[str, bool] = {}
 	propertyBriefs: dict[str, str] = {}
 	propertyTypes: dict[str, str] = {}
+	propertyBlueprintAccessible: dict[str, bool] = {}
 	delegateBriefs: dict[str, str] = {}
 	delegateTypes: dict[str, str] = {}
+	delegateBlueprintAccessible: dict[str, bool] = {}
 
 	for memberElement in compoundElement.iter("memberdef"):
 		memberKind = memberElement.get("kind", "")
@@ -472,17 +583,25 @@ def processCompound(
 			if name not in functionBriefs:
 				functionBriefs[name] = _description(memberElement.find("briefdescription"))
 			functionSignatures.setdefault(name, []).append(_functionSyntax(memberElement))
+			# A function is blueprint accessible if any overload is accessible.
+			if _isBlueprintAccessible(_getBlueprintInfo(memberElement)):
+				functionBlueprintAccessible[name] = True
+			elif name not in functionBlueprintAccessible:
+				functionBlueprintAccessible[name] = False
 		elif memberKind in _MEMBER_KINDS_VARIABLE:
 			brief = _description(memberElement.find("briefdescription"))
 			variableType = _getText(memberElement.find("type"))
+			isAccessible = _isBlueprintAccessible(_getBlueprintInfo(memberElement))
 			page = _propertyPage(memberElement, compoundName)
 			(classDirectory / "{}.md".format(name)).write_text(page, encoding="utf-8")
 			if _isDelegateType(variableType):
 				delegateBriefs[name] = brief
 				delegateTypes[name] = variableType
+				delegateBlueprintAccessible[name] = isAccessible
 			else:
 				propertyBriefs[name] = brief
 				propertyTypes[name] = variableType
+				propertyBlueprintAccessible[name] = isAccessible
 
 	for functionName, overloads in functionGroups.items():
 		page = _functionOverloadsPage(overloads, compoundName)
@@ -495,9 +614,9 @@ def processCompound(
 	indexPage = _classIndexPage(
 		compoundElement, compoundName,
 		compoundBrief, compoundDetail,
-		functionBriefs, functionSignatures,
-		propertyBriefs, propertyTypes,
-		delegateBriefs, delegateTypes,
+		functionBriefs, functionSignatures, functionBlueprintAccessible,
+		propertyBriefs, propertyTypes, propertyBlueprintAccessible,
+		delegateBriefs, delegateTypes, delegateBlueprintAccessible,
 	)
 	(classDirectory / "index.md").write_text(indexPage, encoding="utf-8")
 
