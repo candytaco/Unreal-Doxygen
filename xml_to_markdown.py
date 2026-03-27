@@ -3,8 +3,9 @@
 xml_to_markdown.py — Doxygen XML → per-page Markdown (MSDN / Unreal Engine style)
 
 Converts the XML output produced by Doxygen (``docs/xml/``) into individual
-Markdown files — one file per function, one per class — suitable for
-publishing to [Zensical](https://zensical.org), MkDocs, or any other static site platform.
+Markdown files — one file per function name (all overloads on the same page),
+one per class — suitable for publishing to [Zensical](https://zensical.org),
+MkDocs, or any other static site platform.
 
 The output format follows the MSDN / Unreal Engine reference documentation
 style described at:
@@ -18,7 +19,7 @@ Directory layout produced
         index.md
         <ClassName>/
             index.md          # class overview
-            <MethodName>.md   # one file per member function / property
+            <MethodName>.md   # one file per function name (all overloads combined)
 
 Usage
 -----
@@ -125,25 +126,15 @@ def _params_table(params: list[dict[str, str]]) -> str:
     return "\n".join(rows)
 
 
-def _function_page(member: etree._Element, compound_name: str) -> str:  # type: ignore[name-defined]
-    """Build a Markdown page for a single member function."""
-    func_name = _text(member.find("name"))
-    ret_type = _text(member.find("type"))
-    argsstring = _text(member.find("argsstring"))
-    definition = _text(member.find("definition"))
-    brief = _description(member.find("briefdescription"))
-    detail = _description(member.find("detaileddescription"))
-
-    # Collect parameters
+def _collect_params(member: etree._Element) -> list[dict[str, str]]:  # type: ignore[name-defined]
+    """Return the parameter list for *member*, with descriptions filled in."""
     params: list[dict[str, str]] = []
     for param_el in member.findall("param"):
         p_type = _text(param_el.find("type"))
         p_name = _text(param_el.find("declname")) or _text(param_el.find("defname"))
-        p_desc = ""
-        # param descriptions live in <detaileddescription>/<parameterlist>
-        params.append({"name": p_name, "type": p_type, "desc": p_desc})
+        params.append({"name": p_name, "type": p_type, "desc": ""})
 
-    # Extract @param descriptions from detaileddescription
+    # param descriptions live in <detaileddescription>/<parameterlist>
     if member.find("detaileddescription") is not None:
         for plist in member.find("detaileddescription").iter("parameterlist"):  # type: ignore[union-attr]
             if plist.get("kind") != "param":
@@ -156,21 +147,41 @@ def _function_page(member: etree._Element, compound_name: str) -> str:  # type: 
                 for p in params:
                     if p["name"] == p_name:
                         p["desc"] = p_desc
+    return params
 
-    # Build return description
-    return_desc = ""
-    if member.find("detaileddescription") is not None:
-        for ss in member.find("detaileddescription").iter("simplesect"):  # type: ignore[union-attr]
-            if ss.get("kind") == "return":
-                return_desc = _para_text(ss)
 
-    # Syntax string
+def _get_return_desc(member: etree._Element) -> str:  # type: ignore[name-defined]
+    """Extract the ``@return`` description text from *member*."""
+    if member.find("detaileddescription") is None:
+        return ""
+    for ss in member.find("detaileddescription").iter("simplesect"):  # type: ignore[union-attr]
+        if ss.get("kind") == "return":
+            return _para_text(ss)
+    return ""
+
+
+def _function_syntax(member: etree._Element) -> str:  # type: ignore[name-defined]
+    """Build the C++ syntax string for *member*."""
+    func_name = _text(member.find("name"))
+    ret_type = _text(member.find("type"))
+    argsstring = _text(member.find("argsstring"))
+    definition = _text(member.find("definition"))
     if definition and argsstring:
-        syntax = definition + argsstring
-    elif definition:
-        syntax = definition
-    else:
-        syntax = f"{ret_type} {func_name}{argsstring}"
+        return definition + argsstring
+    if definition:
+        return definition
+    return f"{ret_type} {func_name}{argsstring}"
+
+
+def _function_page(member: etree._Element, compound_name: str) -> str:  # type: ignore[name-defined]
+    """Build a Markdown page for a single (non-overloaded) member function."""
+    func_name = _text(member.find("name"))
+    ret_type = _text(member.find("type"))
+    brief = _description(member.find("briefdescription"))
+    detail = _description(member.find("detaileddescription"))
+    params = _collect_params(member)
+    return_desc = _get_return_desc(member)
+    syntax = _function_syntax(member)
 
     lines: list[str] = [
         f"# {func_name}",
@@ -195,6 +206,58 @@ def _function_page(member: etree._Element, compound_name: str) -> str:  # type: 
 
     if detail:
         lines += ["## Remarks", "", detail, ""]
+
+    return "\n".join(lines)
+
+
+def _function_overloads_page(
+    members: list[etree._Element],  # type: ignore[name-defined]
+    compound_name: str,
+) -> str:
+    """Build a Markdown page for a function name, grouping all overloads.
+
+    If only one overload exists the output is identical to ``_function_page``.
+    For multiple overloads each one is rendered as a ``### Overload N``
+    subsection under a top-level ``## Overloads`` heading.
+    """
+    if len(members) == 1:
+        return _function_page(members[0], compound_name)
+
+    func_name = _text(members[0].find("name"))
+    lines: list[str] = [
+        f"# {func_name}",
+        "",
+        f"**Class:** `{compound_name}`",
+        "",
+        "## Overloads",
+        "",
+    ]
+
+    for i, member in enumerate(members, 1):
+        brief = _description(member.find("briefdescription"))
+        detail = _description(member.find("detaileddescription"))
+        ret_type = _text(member.find("type"))
+        syntax = _function_syntax(member)
+        params = _collect_params(member)
+        return_desc = _get_return_desc(member)
+
+        lines += [f"### Overload {i}", "", _code_block(syntax), ""]
+
+        if brief:
+            lines += [brief, ""]
+
+        if params:
+            lines += ["**Parameters**", "", _params_table(params), ""]
+
+        if ret_type and ret_type not in ("void", ""):
+            lines += ["**Return Value**", ""]
+            if return_desc:
+                lines += [return_desc, ""]
+            else:
+                lines += [f"`{ret_type}`", ""]
+
+        if detail:
+            lines += ["**Remarks**", "", detail, ""]
 
     return "\n".join(lines)
 
@@ -291,7 +354,9 @@ def process_compound(xml_path: Path, output_dir: Path) -> str:
     class_dir = output_dir / short_name
     class_dir.mkdir(parents=True, exist_ok=True)
 
-    function_names: list[str] = []
+    # Group function members by name to merge overloads onto one page.
+    # Insertion order is preserved so the page order matches the header file.
+    func_groups: dict[str, list[etree._Element]] = {}  # type: ignore[name-defined]
     property_names: list[str] = []
 
     for member in compound_el.iter("memberdef"):
@@ -305,13 +370,17 @@ def process_compound(xml_path: Path, output_dir: Path) -> str:
             continue
 
         if m_kind in _MEMBER_KINDS_FUNC:
-            page = _function_page(member, compound_name)
-            (class_dir / f"{name}.md").write_text(page, encoding="utf-8")
-            function_names.append(name)
+            func_groups.setdefault(name, []).append(member)
         elif m_kind in _MEMBER_KINDS_VAR:
             page = _property_page(member, compound_name)
             (class_dir / f"{name}.md").write_text(page, encoding="utf-8")
             property_names.append(name)
+
+    for func_name, overloads in func_groups.items():
+        page = _function_overloads_page(overloads, compound_name)
+        (class_dir / f"{func_name}.md").write_text(page, encoding="utf-8")
+
+    function_names = list(func_groups.keys())
 
     index_page = _class_index_page(
         compound_el, compound_name, function_names, property_names
