@@ -59,10 +59,6 @@ This toolkit solves the problem in two steps:
 
 ### 1 — Copy the Doxyfile into your project
 
-```bash
-cp Doxyfile /path/to/your/project/Doxyfile
-```
-
 Edit `PROJECT_NAME`, `INPUT`, and `OUTPUT_DIRECTORY` at the top.
 
 ### 2 — Point `INPUT_FILTER` at `preprocess.py`
@@ -81,10 +77,6 @@ INPUT_FILTER = "python3 /absolute/path/to/preprocess.py"
 ```
 
 ### 3 — Run Doxygen
-
-```bash
-doxygen Doxyfile
-```
 
 Doxygen will pipe every source file through `preprocess.py`, inject Blueprint
 behaviour descriptions into the doc-comments, and produce HTML + XML output
