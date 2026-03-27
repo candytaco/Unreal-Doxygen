@@ -11,6 +11,9 @@ build/
 # Doxygen output
 docs/
 
+# Zensical / MkDocs build output
+site/
+
 # Editor / OS
 .DS_Store
 *.swp

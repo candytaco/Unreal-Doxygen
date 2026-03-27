@@ -2,7 +2,7 @@
 
 A preprocessing toolkit that makes [Doxygen](https://www.doxygen.nl/) work
 properly with Unreal Engine C++ reflection macros and optionally publishes the
-generated documentation to [Zendesk Help Center](https://www.zendesk.com/).
+generated documentation to [Zensical](https://zensical.org) as a static site.
 
 ---
 
@@ -35,7 +35,7 @@ This toolkit solves the problem in two steps:
 | Script | Purpose |
 |--------|---------|
 | `xml_to_markdown.py` | Converts Doxygen XML output into per-page Markdown (MSDN / Unreal Engine doc style) |
-| `publish_to_zendesk.py` | Uploads the generated Markdown pages to a Zendesk Help Center section |
+| `mkdocs.yml` | [Zensical](https://zensical.org) site configuration — builds a searchable static documentation site from the generated Markdown |
 
 ---
 
@@ -45,10 +45,16 @@ This toolkit solves the problem in two steps:
 
 * Python ≥ 3.9
 * Doxygen ≥ 1.9 ([download](https://www.doxygen.nl/download.html))
-* `lxml` and `requests` Python packages (for the bonus tools):
+* `lxml` Python package (for `xml_to_markdown.py`):
 
   ```bash
-  pip install lxml requests
+  pip install lxml
+  ```
+
+* [Zensical](https://zensical.org) (for publishing the static documentation site):
+
+  ```bash
+  pip install zensical
   ```
 
 ### 1 — Copy the Doxyfile into your project
@@ -217,41 +223,53 @@ python3 xml_to_markdown.py --xml-dir build/xml --output-dir site/api
 
 ---
 
-## publish_to_zendesk.py
+## Zensical — publish the static documentation site
 
-Publishes the Markdown files produced by `xml_to_markdown.py` to a
-[Zendesk Help Center](https://support.zendesk.com/hc/en-us) section.
+[Zensical](https://zensical.org) is a modern static site generator (by the
+creators of Material for MkDocs).  The `mkdocs.yml` in this repository
+configures Zensical to turn the Markdown files produced by `xml_to_markdown.py`
+into a searchable, mobile-friendly reference site.
 
-### Credentials
-
-Set environment variables (or pass as CLI flags):
-
-```bash
-export ZENDESK_SUBDOMAIN=mycompany
-export ZENDESK_EMAIL=admin@example.com
-export ZENDESK_API_TOKEN=<your_api_token>
-```
-
-Generate an API token at:
-**Admin Center → Apps and integrations → APIs → Zendesk API → Add API token**
-
-### Usage
+### Install Zensical
 
 ```bash
-# Dry-run: shows what would be uploaded
-python3 publish_to_zendesk.py --section-id 12345 --dry-run
-
-# Live upload
-python3 publish_to_zendesk.py --section-id 12345
-
-# Pass credentials inline
-python3 publish_to_zendesk.py \
-    --subdomain mycompany \
-    --email admin@example.com \
-    --token MY_TOKEN \
-    --docs-dir docs/md \
-    --section-id 12345
+pip install zensical
 ```
+
+### Preview locally
+
+```bash
+zensical serve
+```
+
+Opens a live-preview server at <http://localhost:8000>.  The site auto-reloads
+whenever a Markdown file changes.
+
+### Build the static site
+
+```bash
+zensical build
+```
+
+Writes the finished site to `site/`.  Upload the contents of `site/` to any
+static hosting provider (GitHub Pages, Netlify, Cloudflare Pages, S3, etc.).
+
+### Deploy to GitHub Pages
+
+```bash
+zensical gh-deploy
+```
+
+Builds the site and force-pushes the output to the `gh-pages` branch of the
+current repository.  Enable GitHub Pages in your repository settings to make
+the site publicly accessible.
+
+### `mkdocs.yml` configuration
+
+The provided `mkdocs.yml` template uses `docs_dir: docs/md` — the default
+output directory of `xml_to_markdown.py`.  Customise `site_name`, `site_url`,
+and optionally add explicit `nav:` entries after running
+`xml_to_markdown.py` for the first time to see which pages are generated.
 
 ---
 
@@ -262,10 +280,16 @@ python3 publish_to_zendesk.py \
 doxygen Doxyfile
 
 # 2. Convert Doxygen XML → per-page Markdown
-python3 xml_to_markdown.py
+python3 xml_to_markdown.py       # writes to docs/md/
 
-# 3. Publish to Zendesk
-python3 publish_to_zendesk.py --section-id 12345
+# 3. Preview the docs site locally
+zensical serve
+
+# 4a. Build the static site
+zensical build                   # output in site/
+
+# 4b. Or deploy directly to GitHub Pages
+zensical gh-deploy
 ```
 
 ---

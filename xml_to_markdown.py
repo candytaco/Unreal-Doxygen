@@ -4,7 +4,7 @@ xml_to_markdown.py — Doxygen XML → per-page Markdown (MSDN / Unreal Engine s
 
 Converts the XML output produced by Doxygen (``docs/xml/``) into individual
 Markdown files — one file per function, one per class — suitable for
-publishing to Zendesk, MkDocs, or any other Markdown-based platform.
+publishing to [Zensical](https://zensical.org), MkDocs, or any other static site platform.
 
 The output format follows the MSDN / Unreal Engine reference documentation
 style described at:
