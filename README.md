@@ -34,7 +34,7 @@ This toolkit solves the problem in two steps:
 
 | Script | Purpose |
 |--------|---------|
-| `xml_to_markdown.py` | Converts Doxygen XML output into per-page Markdown (MSDN / Unreal Engine doc style) |
+| `XML to markdown.py` | Converts Doxygen XML output into per-page Markdown (MSDN / Unreal Engine doc style) |
 | `mkdocs.yml` | [Zensical](https://zensical.org) site configuration — builds a searchable static documentation site from the generated Markdown |
 
 ---
@@ -45,7 +45,7 @@ This toolkit solves the problem in two steps:
 
 * Python ≥ 3.9
 * Doxygen ≥ 1.9 ([download](https://www.doxygen.nl/download.html))
-* `lxml` Python package (for `xml_to_markdown.py`):
+* `lxml` Python package (for `XML to markdown.py`):
 
   ```bash
   pip install lxml
@@ -177,15 +177,15 @@ Doxygen then renders `\blueprintcallable` and `\category{Combat}` as:
 
 ```bash
 # Print processed file to stdout
-python3 preprocess.py MyComponent.h
+python3 Doxygen\ preprocessor.py MyComponent.h
 
 # Write to a file
-python3 preprocess.py MyComponent.h -o MyComponent_processed.h
+python3 Doxygen\ preprocessor.py MyComponent.h -o MyComponent_processed.h
 ```
 
 ---
 
-## xml_to_markdown.py
+## XML to markdown.py
 
 Converts Doxygen's XML output into per-page Markdown using the
 [MSDN reference documentation style](https://github.com/MicrosoftDocs/microsoft-style-guide/blob/main/styleguide/developer-content/reference-documentation.md)
@@ -207,10 +207,10 @@ docs/md/
 
 ```bash
 # Defaults: reads docs/xml, writes to docs/md
-python3 xml_to_markdown.py
+python3 "XML to markdown.py"
 
 # Custom paths
-python3 xml_to_markdown.py --xml-dir build/xml --output-dir site/api
+python3 "XML to markdown.py" --xml-dir build/xml --output-dir site/api
 ```
 
 ---
@@ -219,7 +219,7 @@ python3 xml_to_markdown.py --xml-dir build/xml --output-dir site/api
 
 [Zensical](https://zensical.org) is a modern static site generator (by the
 creators of Material for MkDocs).  The `mkdocs.yml` in this repository
-configures Zensical to turn the Markdown files produced by `xml_to_markdown.py`
+configures Zensical to turn the Markdown files produced by `XML to markdown.py`
 into a searchable, mobile-friendly reference site.
 
 ### Install Zensical
@@ -259,9 +259,9 @@ the site publicly accessible.
 ### `mkdocs.yml` configuration
 
 The provided `mkdocs.yml` template uses `docs_dir: docs/md` — the default
-output directory of `xml_to_markdown.py`.  Customise `site_name`, `site_url`,
+output directory of `XML to markdown.py`.  Customise `site_name`, `site_url`,
 and optionally add explicit `nav:` entries after running
-`xml_to_markdown.py` for the first time to see which pages are generated.
+`XML to markdown.py` for the first time to see which pages are generated.
 
 ---
 
@@ -272,7 +272,7 @@ and optionally add explicit `nav:` entries after running
 doxygen Doxyfile
 
 # 2. Convert Doxygen XML → per-page Markdown
-python3 xml_to_markdown.py       # writes to docs/md/
+python3 "XML to markdown.py"       # writes to docs/md/
 
 # 3. Preview the docs site locally
 zensical serve
