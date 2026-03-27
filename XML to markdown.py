@@ -320,6 +320,8 @@ def _classDeclaration(compoundElement: etree._Element, className: str) -> str:  
 def _classIndexPage(
 	compoundElement: etree._Element,  # type: ignore[name-defined]
 	className: str,
+	compoundBrief: str,
+	compoundDetail: str,
 	functionBriefs: dict[str, str],
 	functionSignatures: dict[str, list[str]],
 	propertyBriefs: dict[str, str],
@@ -328,18 +330,15 @@ def _classIndexPage(
 	delegateTypes: dict[str, str],
 ) -> str:
 	"""Build the index page for a class / struct."""
-	brief = _description(compoundElement.find("briefdescription"))
-	detail = _description(compoundElement.find("detaileddescription"))
-
 	lines: list[str] = ["# {}".format(className), ""]
 
-	if brief:
-		lines += [brief, ""]
+	if compoundBrief:
+		lines += [compoundBrief, ""]
 
 	lines += ["## Syntax", "", _codeBlock(_classDeclaration(compoundElement, className)), ""]
 
-	if detail:
-		lines += ["## Remarks", "", detail, ""]
+	if compoundDetail:
+		lines += ["## Remarks", "", compoundDetail, ""]
 
 	if functionBriefs:
 		rows = [
@@ -415,13 +414,13 @@ def _extractPluginName(compoundElement: etree._Element) -> str | None:  # type: 
 
 def processCompound(
 	xmlPath: Path, outputDirectory: Path
-) -> tuple[str, str, str, str | None] | None:
+) -> tuple[str, str, str, str, str | None] | None:
 	"""Process one Doxygen compound XML file.
 
-	Returns ``(compoundName, compoundBrief, compoundKind, pluginName)`` on
-	success, or ``None`` for compound kinds that are skipped (e.g. namespaces,
-	raw files).  ``pluginName`` is ``None`` when the compound does not belong
-	to a plugin.
+	Returns ``(compoundName, compoundBrief, compoundDetail, compoundKind,
+	pluginName)`` on success, or ``None`` for compound kinds that are skipped
+	(e.g. namespaces, raw files).  ``pluginName`` is ``None`` when the
+	compound does not belong to a plugin.
 	"""
 	tree = etree.parse(str(xmlPath))
 	root = tree.getroot()
@@ -489,18 +488,20 @@ def processCompound(
 		page = _functionOverloadsPage(overloads, compoundName)
 		(classDirectory / "{}.md".format(functionName)).write_text(page, encoding="utf-8")
 
-	# Capture the compound brief before _classIndexPage consumes it via _description().
+	# Capture both descriptions before _classIndexPage would otherwise consume them.
 	compoundBrief = _description(compoundElement.find("briefdescription"))
+	compoundDetail = _description(compoundElement.find("detaileddescription"))
 
 	indexPage = _classIndexPage(
 		compoundElement, compoundName,
+		compoundBrief, compoundDetail,
 		functionBriefs, functionSignatures,
 		propertyBriefs, propertyTypes,
 		delegateBriefs, delegateTypes,
 	)
 	(classDirectory / "index.md").write_text(indexPage, encoding="utf-8")
 
-	return compoundName, compoundBrief, kind, pluginName
+	return compoundName, compoundBrief, compoundDetail, kind, pluginName
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +511,16 @@ def processCompound(
 def _writePluginIndex(
 	pluginDirectory: Path,
 	pluginName: str,
-	compoundEntries: list[tuple[str, str, str]],
+	compoundEntries: list[tuple[str, str, str, str]],
+	pluginDescription: tuple[str, str],
 ) -> None:
 	"""Write an MSDN-style index page listing all compounds in a plugin."""
+	pluginBrief, pluginDetail = pluginDescription
 	lines: list[str] = ["# {} plugin".format(pluginName), ""]
+	if pluginBrief:
+		lines += [pluginBrief, ""]
+	if pluginDetail:
+		lines += [pluginDetail, ""]
 
 	sectionConfig = [
 		("class",  "## Classes"),
@@ -522,7 +529,7 @@ def _writePluginIndex(
 	]
 	for kindFilter, sectionHeader in sectionConfig:
 		filtered = sorted(
-			[(name, brief) for name, brief, kind in compoundEntries if kind == kindFilter],
+			[(name, brief) for name, brief, _, kind in compoundEntries if kind == kindFilter],
 			key = lambda entry: entry[0],
 		)
 		if not filtered:
@@ -541,8 +548,8 @@ def _writePluginIndex(
 
 def _writeTopIndex(
 	outputDirectory: Path,
-	pluginMap: dict[str | None, list[tuple[str, str, str]]],
-	pluginDescriptions: dict[str, str],
+	pluginMap: dict[str | None, list[tuple[str, str, str, str]]],
+	pluginDescriptions: dict[str, tuple[str, str]],
 ) -> None:
 	"""Write the root index page, organised by plugin then by loose class."""
 	lines: list[str] = [
@@ -555,14 +562,14 @@ def _writeTopIndex(
 	for pluginName in sorted(name for name in pluginMap if name is not None):
 		lines.append("## [{} plugin]({}/index.md)".format(pluginName, pluginName))
 		lines.append("")
-		description = pluginDescriptions.get(pluginName, "")
-		if description:
-			lines += [description, ""]
+		pluginBrief, _ = pluginDescriptions.get(pluginName, ("", ""))
+		if pluginBrief:
+			lines += [pluginBrief, ""]
 
 	nonPluginEntries = pluginMap.get(None, [])
 	if nonPluginEntries:
 		lines += ["## Classes", ""]
-		for name in sorted(entry[0] for entry in nonPluginEntries):
+		for name in sorted(entry[0] for entry in nonPluginEntries):  # entry is (name, brief, detail, kind)
 			shortName = name.rsplit("::", 1)[-1]
 			lines.append("- [{}]({}/index.md)".format(name, shortName))
 		lines.append("")
@@ -578,9 +585,9 @@ def convert(xmlDirectory: Path, outputDirectory: Path) -> None:
 	"""Convert all compound XML files in xmlDirectory to Markdown in outputDirectory."""
 	outputDirectory.mkdir(parents=True, exist_ok=True)
 
-	# Maps plugin name (or None for non-plugin compounds) to (compoundName, brief, kind) triples.
-	pluginMap: dict[str | None, list[tuple[str, str, str]]] = {}
-	pluginDescriptions: dict[str, str] = {}
+	# Maps plugin name (or None for non-plugin compounds) to (name, brief, detail, kind) tuples.
+	pluginMap: dict[str | None, list[tuple[str, str, str, str]]] = {}
+	pluginDescriptions: dict[str, tuple[str, str]] = {}
 
 	xmlFiles = list(xmlDirectory.glob("*.xml"))
 	if not xmlFiles:
@@ -595,25 +602,28 @@ def convert(xmlDirectory: Path, outputDirectory: Path) -> None:
 			continue
 		result = processCompound(xmlFile, outputDirectory)
 		if result is not None:
-			compoundName, compoundBrief, compoundKind, pluginName = result
-			pluginMap.setdefault(pluginName, []).append((compoundName, compoundBrief, compoundKind))
+			compoundName, compoundBrief, compoundDetail, compoundKind, pluginName = result
+			pluginMap.setdefault(pluginName, []).append((compoundName, compoundBrief, compoundDetail, compoundKind))
 			print("  converted: {} → {}".format(xmlFile.name, compoundName))
 
-	# Derive plugin descriptions from the FXxxModule compound brief.
+	# Derive plugin descriptions from the FXxxModule compound brief and detail.
 	# Unreal Engine module classes follow the IModuleInterface convention and
 	# their names end with "Module" (e.g. FEyelinkModule, FMRIExperimentModule).
 	for pluginName, entries in pluginMap.items():
 		if pluginName is None:
 			continue
-		for compoundName, compoundBrief, compoundKind in entries:
+		for compoundName, compoundBrief, compoundDetail, compoundKind in entries:
 			shortName = compoundName.rsplit("::", 1)[-1]
 			if compoundKind == "class" and shortName.endswith("Module") and compoundBrief:
-				pluginDescriptions[pluginName] = compoundBrief
+				pluginDescriptions[pluginName] = (compoundBrief, compoundDetail)
 				break
 
 	for pluginName, compoundEntries in pluginMap.items():
 		if pluginName is not None:
-			_writePluginIndex(outputDirectory / pluginName, pluginName, compoundEntries)
+			_writePluginIndex(
+				outputDirectory / pluginName, pluginName, compoundEntries,
+				pluginDescriptions.get(pluginName, ("", "")),
+			)
 
 	_writeTopIndex(outputDirectory, pluginMap, pluginDescriptions)
 
