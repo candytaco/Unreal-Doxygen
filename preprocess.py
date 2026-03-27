@@ -371,12 +371,104 @@ def _inject_into_line_comment(content: str, comment_end: int, injection: str) ->
 # Main processing
 # ===========================================================================
 
+def _build_comment_ranges(content: str) -> list[tuple[int, int]]:
+    """Return a sorted list of ``(start, end)`` ranges for all comment spans.
+
+    Both ``//`` line comments and ``/* … */`` block comments are included.
+    String and character literals are skipped so that ``//`` or ``/*`` inside
+    quoted text is not misidentified as a comment start.
+    Ranges are sorted in ascending order by start position (guaranteed by the
+    sequential left-to-right scan).
+    The ranges use exclusive end indices (Python slice convention).
+    """
+    ranges: list[tuple[int, int]] = []
+    i = 0
+    n = len(content)
+    while i < n:
+        ch = content[i]
+
+        # Skip string and character literals (handles backslash escape sequences)
+        if ch == '"':
+            i += 1
+            while i < n:
+                if content[i] == "\\":
+                    i += 2
+                elif content[i] == '"':
+                    i += 1
+                    break
+                else:
+                    i += 1
+            continue
+
+        # Skip character literals (handles backslash escape sequences)
+        if ch == "'":
+            i += 1
+            while i < n:
+                if content[i] == "\\":
+                    i += 2
+                elif content[i] == "'":
+                    i += 1
+                    break
+                else:
+                    i += 1
+            continue
+
+        if ch == "/" and i + 1 < n:
+            if content[i + 1] == "/":
+                # Line comment: extends to end of line
+                end = content.find("\n", i + 2)
+                end = end if end != -1 else n
+                ranges.append((i, end))
+                i = end
+                continue
+            if content[i + 1] == "*":
+                # Block comment: extends to closing */
+                end = content.find("*/", i + 2)
+                end = end + 2 if end != -1 else n
+                ranges.append((i, end))
+                i = end
+                continue
+        i += 1
+    return ranges
+
+
+def _in_comment(pos: int, comment_ranges: list[tuple[int, int]]) -> bool:
+    """Return True if *pos* falls inside any of the precomputed comment ranges.
+
+    Uses binary search (O(log n)) since *comment_ranges* is sorted by start.
+    """
+    if not comment_ranges:
+        return False
+    # Binary search for the rightmost range whose start <= pos.
+    lo, hi = 0, len(comment_ranges)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if comment_ranges[mid][0] <= pos:
+            lo = mid + 1
+        else:
+            hi = mid
+    # lo - 1 is the index of the rightmost range with start <= pos (if any).
+    if lo > 0:
+        start, end = comment_ranges[lo - 1]
+        return start <= pos < end
+    return False
+
+
 def process_content(content: str) -> str:
     """Process C++ file content and return the filtered version for Doxygen."""
 
+    # Anchor to the start of a line (after optional horizontal whitespace) so
+    # that a macro name mentioned inside a comment body or a string literal is
+    # not mistaken for a real macro invocation.  We use [ \t]* instead of \s*
+    # to match only spaces and tabs (normal C++ indentation) and avoid
+    # consuming newlines that would skip blank lines between constructs.
     macro_re = re.compile(
-        r"\b(" + "|".join(re.escape(m) for m in UNREAL_MACROS) + r")\s*\("
+        r"^[ \t]*(" + "|".join(re.escape(m) for m in UNREAL_MACROS) + r")\s*\(",
+        re.MULTILINE,
     )
+
+    # Pre-compute comment ranges so we can skip matches that fall inside them.
+    comment_ranges = _build_comment_ranges(content)
 
     # Collect all macro spans so we can process them without offset drift.
     # We do a single reverse-order edit pass.
@@ -391,7 +483,10 @@ def process_content(content: str) -> str:
 
     spans: list[_MacroSpan] = []
     for m in macro_re.finditer(content):
-        # Guard: must not be part of a longer identifier (already handled by \b)
+        # Skip matches that fall inside a comment (e.g. a doc comment that
+        # mentions UFUNCTION in its body, or a macro inside a block comment).
+        if _in_comment(m.start(), comment_ranges):
+            continue
         paren_pos = m.end() - 1  # points at '('
         try:
             args, end = extract_balanced_parens(content, paren_pos)
