@@ -1,0 +1,195 @@
+# =============================================================================
+# Doxyfile — Unreal Engine Doxygen Template
+#
+# This is a template Doxyfile for documenting Unreal Engine C++ projects with
+# Doxygen.  It defines:
+#   - ALIASES for all common Unreal reflection-macro specifiers so that the
+#     preprocess.py filter can inject human-readable Blueprint behaviour
+#     descriptions directly into the generated documentation.
+#   - PREDEFINED macros that expand Unreal boiler-plate to nothing, preventing
+#     Doxygen from choking on reflection tokens.
+#   - INPUT_FILTER / FILTER_PATTERNS pointing at preprocess.py.
+#
+# Usage
+# -----
+# 1. Copy this file into your project root (or keep it in the tool directory).
+# 2. Adjust PROJECT_NAME, INPUT, OUTPUT_DIRECTORY, etc.
+# 3. Run:  doxygen Doxyfile
+#
+# =============================================================================
+
+#---------------------------------------------------------------------------
+# Project metadata
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "Unreal Engine Project"
+PROJECT_NUMBER         = 1.0
+PROJECT_BRIEF          = "Unreal Engine C++ API Reference"
+PROJECT_LOGO           =
+
+OUTPUT_DIRECTORY       = docs
+
+#---------------------------------------------------------------------------
+# Output formats
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+# XML output is required by xml_to_markdown.py to produce per-page Markdown
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = NO
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+# Adjust INPUT to the relative (or absolute) path of your Source/ directory.
+INPUT                  = Source
+FILE_PATTERNS          = *.h *.hpp *.cpp *.inl
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */ThirdParty/* */.git/*
+
+# Doxygen calls  preprocess.py <filename>  and reads stdout.
+# Adjust the path to preprocess.py if it lives elsewhere.
+INPUT_FILTER           = "python3 preprocess.py"
+FILTER_SOURCE_FILES    = YES
+
+#---------------------------------------------------------------------------
+# Extraction
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+#---------------------------------------------------------------------------
+# Preprocessing
+#
+# Even though preprocess.py comments out the macros before Doxygen sees the
+# file, the PREDEFINED list below acts as a safety net for any pass that
+# bypasses the filter (e.g., direct IDE integration).
+#---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+
+PREDEFINED             = \
+    "UPROPERTY(...)=" \
+    "UFUNCTION(...)=" \
+    "UCLASS(...)=" \
+    "USTRUCT(...)=" \
+    "UENUM(...)=" \
+    "UDELEGATE(...)=" \
+    "UMETA(...)=" \
+    "UPARAM(...)=" \
+    "GENERATED_BODY()=" \
+    "GENERATED_UCLASS_BODY()=" \
+    "GENERATED_USTRUCT_BODY()=" \
+    "FORCEINLINE=inline" \
+    "FORCENOINLINE=" \
+    "TEXT(x)=L##x" \
+    "check(x)=" \
+    "checkf(x,...)=" \
+    "ensure(x)=x" \
+    "ensureMsgf(x,...)=x"
+
+#---------------------------------------------------------------------------
+# Documentation style
+#---------------------------------------------------------------------------
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS           = YES
+SEPARATE_MEMBER_PAGES  = YES
+TAB_SIZE               = 4
+
+#---------------------------------------------------------------------------
+# HTML output
+#---------------------------------------------------------------------------
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+
+#---------------------------------------------------------------------------
+# Sorting
+#---------------------------------------------------------------------------
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = NO
+
+#---------------------------------------------------------------------------
+# Dot / graphs
+#---------------------------------------------------------------------------
+HAVE_DOT               = NO
+
+# =============================================================================
+# ALIASES — Unreal Engine reflection macro specifiers
+#
+# Each alias is used by preprocess.py to describe how a UPROPERTY, UFUNCTION,
+# UCLASS, etc. behaves in Blueprint / the editor.
+#
+# The script injects \<alias> (or \<alias>{value}) into the preceding /** */
+# comment.  Doxygen then renders them as styled paragraphs.
+#
+# Naming convention:
+#   \<macroname>           — marks the item as carrying that reflection macro
+#   \<specifiername>       — bare flag specifier (no value)
+#   \<specifiername>{1}    — key=value specifier (\1 is substituted)
+# =============================================================================
+ALIASES = \
+    \
+    "uproperty=\xrefitem uproperties \"UPROPERTY\" \"UPROPERTY Members\"" \
+    "ufunction=\xrefitem ufunctions \"UFUNCTION\" \"UFUNCTION Members\"" \
+    "uclass=\xrefitem uclasses \"UCLASS\" \"UCLASS Types\"" \
+    "ustruct=\xrefitem ustructs \"USTRUCT\" \"USTRUCT Types\"" \
+    "uenum=\xrefitem uenums \"UENUM\" \"UENUM Types\"" \
+    "udelegate=\xrefitem udelegates \"UDELEGATE\" \"UDELEGATE Types\"" \
+    "umeta=\xrefitem umeta \"UMETA\" \"UMETA Entries\"" \
+    "uparam=\xrefitem uparams \"UPARAM\" \"UPARAM Parameters\"" \
+    \
+    "blueprintreadwrite=\par Blueprint Access\n Accessible in Blueprints (Read / Write)\n" \
+    "blueprintreadonly=\par Blueprint Access\n Read-only in Blueprints\n" \
+    "blueprintnativeonly=\par Blueprint Access\n Native only — not accessible to non-native Blueprints\n" \
+    "blueprintassignable=\par Blueprint\n Assignable in Blueprints (Multicast Delegate)\n" \
+    "blueprintauthorityonly=\par Blueprint\n Authority only — executes only on the server\n" \
+    "blueprintcosmetic=\par Blueprint\n Cosmetic — will not run on a dedicated server\n" \
+    \
+    "blueprintcallable=\par Blueprint\n Callable from Blueprints\n" \
+    "blueprintpure=\par Blueprint\n Pure — no exec pins, does not modify state\n" \
+    "blueprintimplementableevent=\par Blueprint\n Implementable Event — override in Blueprints\n" \
+    "blueprintnativeevent=\par Blueprint\n Native Event — may be overridden in Blueprints\n" \
+    \
+    "exec=\par Input\n Exec command — callable from the in-game console\n" \
+    "server=\par RPC\n Server RPC — runs on the server\n" \
+    "client=\par RPC\n Client RPC — runs on the owning client\n" \
+    "netmulticast=\par RPC\n NetMulticast RPC — runs on server and all clients\n" \
+    "reliable=\par RPC Reliability\n Reliable — guaranteed delivery\n" \
+    "unreliable=\par RPC Reliability\n Unreliable — best-effort delivery\n" \
+    \
+    "editanywhere=\par Editable\n Editable in class defaults and instances\n" \
+    "editdefaultsonly=\par Editable\n Editable in class defaults only\n" \
+    "editinstanceonly=\par Editable\n Editable on instances only (not in defaults)\n" \
+    "visibleanywhere=\par Visible\n Visible everywhere (read-only)\n" \
+    "visibledefaultsonly=\par Visible\n Visible in class defaults only (read-only)\n" \
+    "visibleinstanceonly=\par Visible\n Visible on instances only (read-only)\n" \
+    "editfixedsize=\par Edit\n Fixed array size — cannot add or remove elements\n" \
+    "editinline=\par Edit\n Editable inline inside the owning object\n" \
+    \
+    "transient=\par Serialisation\n Transient — not saved or loaded\n" \
+    "savegame=\par Serialisation\n SaveGame — serialised to SaveGame objects\n" \
+    "config=\par Config\n Configurable from project .ini files\n" \
+    "globalconfig=\par Config\n Global config — read from DefaultGame.ini\n" \
+    \
+    "blueprintable=\par Blueprint\n Blueprintable — class can be subclassed in Blueprints\n" \
+    "notblueprintable=\par Blueprint\n Not Blueprintable — class cannot be subclassed in Blueprints\n" \
+    "blueprinttype=\par Blueprint\n BlueprintType — can be used as a variable type in Blueprints\n" \
+    "notblueprinttype=\par Blueprint\n Not BlueprintType — cannot be used as a variable type in Blueprints\n" \
+    "abstract_class=\par Class\n Abstract — cannot be instantiated directly\n" \
+    "deprecated_ue=\deprecated This item is deprecated in Unreal Engine.\n" \
+    \
+    "category{1}=\par Category\n \1\n" \
+    "displayname{1}=\par Display Name\n \1\n" \
+    "uetooltip{1}=\par Tooltip\n \1\n" \
+    "uekeywords{1}=\par Keywords\n \1\n" \
+    "blueprintsetter{1}=\par Blueprint Setter\n \1\n" \
+    "blueprintgetter{1}=\par Blueprint Getter\n \1\n"
