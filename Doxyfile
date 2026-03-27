@@ -33,7 +33,7 @@ OUTPUT_DIRECTORY       = docs
 #---------------------------------------------------------------------------
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO
-# XML output is required by xml_to_markdown.py to produce per-page Markdown
+# XML output is required by the markdown converter to produce per-page Markdown
 GENERATE_XML           = YES
 XML_OUTPUT             = xml
 XML_PROGRAMLISTING     = NO
@@ -47,9 +47,10 @@ FILE_PATTERNS          = *.h *.hpp *.cpp *.inl
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */ThirdParty/* */.git/*
 
-# Doxygen calls  preprocess.py <filename>  and reads stdout.
-# Adjust the path to preprocess.py if it lives elsewhere.
-INPUT_FILTER           = "python3 preprocess.py"
+# Doxygen calls the preprocessor file on your source files first, and and reads
+# the output from that instead of the raw files.
+# Adjust the path to the preprocess python script if it lives elsewhere.
+INPUT_FILTER           = "python3 Doxygen\ proprocessor.py"
 FILTER_SOURCE_FILES    = YES
 
 #---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ HIDE_UNDOC_CLASSES     = NO
 #---------------------------------------------------------------------------
 # Preprocessing
 #
-# Even though preprocess.py comments out the macros before Doxygen sees the
+# Even though the preprocessor script comments out the macros before Doxygen sees the
 # file, the PREDEFINED list below acts as a safety net for any pass that
 # bypasses the filter (e.g., direct IDE integration).
 #---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ HAVE_DOT               = NO
 # =============================================================================
 # ALIASES — Unreal Engine reflection macro specifiers
 #
-# Each alias is used by preprocess.py to describe how a UPROPERTY, UFUNCTION,
+# Each alias is used by the processor script to describe how a UPROPERTY, UFUNCTION,
 # UCLASS, etc. behaves in Blueprint / the editor.
 #
 # The script injects \<alias> (or \<alias>{value}) into the preceding /** */
