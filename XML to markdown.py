@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-xml_to_markdown.py — Doxygen XML → per-page Markdown (MSDN / Unreal Engine style)
+XML to markdown.py — Doxygen XML → per-page Markdown (MSDN / Unreal Engine style)
 
 Converts the XML output produced by Doxygen (``docs/xml/``) into individual
 Markdown files — one file per function name (all overloads on the same page),
-one per class — suitable for publishing to [Zensical](https://zensical.org),
+one per class — suitable for publishing to `Zensical <https://zensical.org>`_,
 MkDocs, or any other static site platform.
 
 The output format follows the MSDN / Unreal Engine reference documentation
@@ -17,482 +17,637 @@ Directory layout produced
 
     <output_dir>/
         index.md
-        <ClassName>/
-            index.md          # class overview
-            <MethodName>.md   # one file per function name (all overloads combined)
+        <PluginName>/
+            index.md          # plugin overview
+            <ClassName>/
+                index.md          # class overview
+                <MethodName>.md   # one file per function name (all overloads combined)
 
 Usage
 -----
 ::
 
-    python3 xml_to_markdown.py [--xml-dir docs/xml] [--output-dir docs/md]
-    python3 xml_to_markdown.py --xml-dir path/to/xml --output-dir path/to/md
+    python3 "XML to markdown.py" [--xml-dir docs/xml] [--output-dir docs/md]
+    python3 "XML to markdown.py" --xml-dir path/to/xml --output-dir path/to/md
 
-Dependencies: Python ≥ 3.9, ``lxml`` (``pip install lxml``)
+Dependencies: Python >= 3.9, ``lxml`` (``pip install lxml``)
 """
 
 from __future__ import annotations
 
 import argparse
-import html
-import re
 import sys
 from pathlib import Path
 
 try:
-    from lxml import etree  # type: ignore[import]
+	from lxml import etree  # type: ignore[import]
 except ImportError:  # pragma: no cover
-    print("error: lxml is required.  Install with: pip install lxml", file=sys.stderr)
-    sys.exit(1)
+	print("error: lxml is required.  Install with: pip install lxml", file=sys.stderr)
+	sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
 # XML helpers
 # ---------------------------------------------------------------------------
 
-def _text(el: etree._Element | None, default: str = "") -> str:  # type: ignore[name-defined]
-    """Return the concatenated text content of *el*, stripping excess space."""
-    if el is None:
-        return default
-    parts: list[str] = []
-    if el.text:
-        parts.append(el.text)
-    for child in el:
-        parts.append(_text(child))
-        if child.tail:
-            parts.append(child.tail)
-    return " ".join(p.strip() for p in parts if p.strip())
+def _getText(element: etree._Element | None, default: str = "") -> str:  # type: ignore[name-defined]
+	"""Return the concatenated text content of element, stripping excess whitespace."""
+	if element is None:
+		return default
+	parts: list[str] = []
+	if element.text:
+		parts.append(element.text)
+	for child in element:
+		parts.append(_getText(child))
+		if child.tail:
+			parts.append(child.tail)
+	return " ".join(part.strip() for part in parts if part.strip())
 
 
-def _para_text(parent: etree._Element | None, default: str = "") -> str:  # type: ignore[name-defined]
-    """Concatenate all ``<para>`` text children of *parent*."""
-    if parent is None:
-        return default
-    paras = [_text(p) for p in parent.findall("para")]
-    return "\n\n".join(p for p in paras if p)
+def _paraText(parentElement: etree._Element | None, default: str = "") -> str:  # type: ignore[name-defined]
+	"""Concatenate all ``<para>`` text children of parentElement."""
+	if parentElement is None:
+		return default
+	paragraphs = [_getText(paragraph) for paragraph in parentElement.findall("para")]
+	return "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
 
 
-def _ref_text(el: etree._Element) -> str:  # type: ignore[name-defined]
-    """Render a ``<ref>`` element as a Markdown code-span."""
-    inner = (el.text or "").strip()
-    return f"`{inner}`" if inner else ""
+def _description(descriptionElement: etree._Element | None) -> str:  # type: ignore[name-defined]
+	"""Convert a ``<briefdescription>`` or ``<detaileddescription>`` to Markdown.
 
-
-def _description(desc_el: etree._Element | None) -> str:  # type: ignore[name-defined]
-    """Convert a ``<briefdescription>`` or ``<detaileddescription>`` to Markdown."""
-    if desc_el is None:
-        return ""
-    lines: list[str] = []
-    # Use findall (direct children only) instead of iter to avoid processing
-    # nested <para> elements inside <simplesect> more than once.
-    for para in desc_el.findall("para"):
-        # simplesect → custom section (our aliases become \par paragraphs)
-        for ss in para.findall("simplesect"):
-            title_el = ss.find("title")
-            title = _text(title_el) if title_el is not None else ss.get("kind", "")
-            body = _para_text(ss)
-            if title and body:
-                lines.append(f"**{title}:** {body}")
-            elif body:
-                lines.append(body)
-            para.remove(ss)
-        # remaining text in the <para>
-        remaining = _text(para)
-        if remaining:
-            lines.append(remaining)
-    return "\n\n".join(l for l in lines if l)
+	Note: ``<simplesect kind="return">`` elements are intentionally skipped here
+	and left in the tree for ``_getReturnDescription`` to handle separately.
+	"""
+	if descriptionElement is None:
+		return ""
+	lines: list[str] = []
+	# Use findall (direct children only) to avoid re-processing nested <para>
+	# elements inside <simplesect> more than once.
+	for paragraph in descriptionElement.findall("para"):
+		for simplesect in paragraph.findall("simplesect"):
+			# Return descriptions are rendered in their own section; skip them here.
+			if simplesect.get("kind") == "return":
+				continue
+			titleElement = simplesect.find("title")
+			title = _getText(titleElement) if titleElement is not None else simplesect.get("kind", "")
+			body = _paraText(simplesect)
+			if title and body:
+				lines.append("**{}:** {}".format(title, body))
+			elif body:
+				lines.append(body)
+			paragraph.remove(simplesect)
+		remaining = _getText(paragraph)
+		if remaining:
+			lines.append(remaining)
+	return "\n\n".join(line for line in lines if line)
 
 
 # ---------------------------------------------------------------------------
 # Markdown page builders
 # ---------------------------------------------------------------------------
 
-def _code_block(code: str, lang: str = "cpp") -> str:
-    return f"```{lang}\n{code.strip()}\n```"
+def _codeBlock(code: str, lang: str = "cpp") -> str:
+	return "```{}\n{}\n```".format(lang, code.strip())
 
 
-def _params_table(params: list[dict[str, str]]) -> str:
-    if not params:
-        return ""
-    rows = [
-        "| Parameter | Type | Description |",
-        "|-----------|------|-------------|",
-    ]
-    for p in params:
-        name = p.get("name", "")
-        typ = p.get("type", "")
-        desc = p.get("desc", "")
-        rows.append(f"| `{name}` | `{typ}` | {desc} |")
-    return "\n".join(rows)
+def _paramsTable(parameterList: list[dict[str, str]]) -> str:
+	if not parameterList:
+		return ""
+	rows = [
+		"| Parameter | Type | Description |",
+		"|-----------|------|-------------|",
+	]
+	for parameter in parameterList:
+		name = parameter.get("name", "")
+		parameterType = parameter.get("type", "")
+		description = parameter.get("desc", "")
+		rows.append("| `{}` | `{}` | {} |".format(name, parameterType, description))
+	return "\n".join(rows)
 
 
-def _collect_params(member: etree._Element) -> list[dict[str, str]]:  # type: ignore[name-defined]
-    """Return the parameter list for *member*, with descriptions filled in."""
-    params: list[dict[str, str]] = []
-    for param_el in member.findall("param"):
-        p_type = _text(param_el.find("type"))
-        p_name = _text(param_el.find("declname")) or _text(param_el.find("defname"))
-        params.append({"name": p_name, "type": p_type, "desc": ""})
+def _collectParams(memberElement: etree._Element) -> list[dict[str, str]]:  # type: ignore[name-defined]
+	"""Return the parameter list for memberElement, with descriptions filled in."""
+	parameterList: list[dict[str, str]] = []
+	for paramElement in memberElement.findall("param"):
+		parameterType = _getText(paramElement.find("type"))
+		parameterName = _getText(paramElement.find("declname")) or _getText(paramElement.find("defname"))
+		parameterList.append({"name": parameterName, "type": parameterType, "desc": ""})
 
-    # param descriptions live in <detaileddescription>/<parameterlist>
-    if member.find("detaileddescription") is not None:
-        for plist in member.find("detaileddescription").iter("parameterlist"):  # type: ignore[union-attr]
-            if plist.get("kind") != "param":
-                continue
-            for pitem in plist.findall("parameteritem"):
-                namelist = pitem.find("parameternamelist")
-                desc_el = pitem.find("parameterdescription")
-                p_name = _text(namelist.find("parametername")) if namelist is not None else ""
-                p_desc = _para_text(desc_el)
-                for p in params:
-                    if p["name"] == p_name:
-                        p["desc"] = p_desc
-    return params
-
-
-def _get_return_desc(member: etree._Element) -> str:  # type: ignore[name-defined]
-    """Extract the ``@return`` description text from *member*."""
-    if member.find("detaileddescription") is None:
-        return ""
-    for ss in member.find("detaileddescription").iter("simplesect"):  # type: ignore[union-attr]
-        if ss.get("kind") == "return":
-            return _para_text(ss)
-    return ""
+	# Parameter descriptions live in <detaileddescription>/<parameterlist>.
+	detailedDescription = memberElement.find("detaileddescription")
+	if detailedDescription is not None:
+		for parameterListElement in detailedDescription.iter("parameterlist"):  # type: ignore[union-attr]
+			if parameterListElement.get("kind") != "param":
+				continue
+			for parameterItem in parameterListElement.findall("parameteritem"):
+				nameList = parameterItem.find("parameternamelist")
+				descriptionElement = parameterItem.find("parameterdescription")
+				parameterName = _getText(nameList.find("parametername")) if nameList is not None else ""
+				parameterDescription = _paraText(descriptionElement)
+				for parameter in parameterList:
+					if parameter["name"] == parameterName:
+						parameter["desc"] = parameterDescription
+	return parameterList
 
 
-def _function_syntax(member: etree._Element) -> str:  # type: ignore[name-defined]
-    """Build the C++ syntax string for *member*."""
-    func_name = _text(member.find("name"))
-    ret_type = _text(member.find("type"))
-    argsstring = _text(member.find("argsstring"))
-    definition = _text(member.find("definition"))
-    if definition and argsstring:
-        return definition + argsstring
-    if definition:
-        return definition
-    return f"{ret_type} {func_name}{argsstring}"
+def _getReturnDescription(memberElement: etree._Element) -> str:  # type: ignore[name-defined]
+	"""Extract the ``@return`` description text from memberElement."""
+	detailedDescription = memberElement.find("detaileddescription")
+	if detailedDescription is None:
+		return ""
+	for simplesect in detailedDescription.iter("simplesect"):
+		if simplesect.get("kind") == "return":
+			return _paraText(simplesect)
+	return ""
 
 
-def _function_page(member: etree._Element, compound_name: str) -> str:  # type: ignore[name-defined]
-    """Build a Markdown page for a single (non-overloaded) member function."""
-    func_name = _text(member.find("name"))
-    ret_type = _text(member.find("type"))
-    brief = _description(member.find("briefdescription"))
-    detail = _description(member.find("detaileddescription"))
-    params = _collect_params(member)
-    return_desc = _get_return_desc(member)
-    syntax = _function_syntax(member)
-
-    lines: list[str] = [
-        f"# {func_name} method",
-        "",
-        f"**Class:** `{compound_name}`",
-        "",
-    ]
-    if brief:
-        lines += [brief, ""]
-
-    lines += ["## Syntax", "", _code_block(syntax), ""]
-
-    if params:
-        lines += ["## Parameters", "", _params_table(params), ""]
-
-    if ret_type and ret_type not in ("void", ""):
-        lines += ["## Return Value", ""]
-        if return_desc:
-            lines += [return_desc, ""]
-        else:
-            lines += [f"`{ret_type}`", ""]
-
-    if detail:
-        lines += ["## Remarks", "", detail, ""]
-
-    return "\n".join(lines)
+def _functionSyntax(memberElement: etree._Element) -> str:  # type: ignore[name-defined]
+	"""Build the C++ syntax string for memberElement."""
+	functionName = _getText(memberElement.find("name"))
+	returnType = _getText(memberElement.find("type"))
+	argumentsString = _getText(memberElement.find("argsstring"))
+	definition = _getText(memberElement.find("definition"))
+	if definition and argumentsString:
+		return definition + argumentsString
+	if definition:
+		return definition
+	return "{} {}{}".format(returnType, functionName, argumentsString)
 
 
-def _function_overloads_page(
-    members: list[etree._Element],  # type: ignore[name-defined]
-    compound_name: str,
+def _functionPage(memberElement: etree._Element, compoundName: str) -> str:  # type: ignore[name-defined]
+	"""Build a Markdown page for a single (non-overloaded) member function."""
+	functionName = _getText(memberElement.find("name"))
+	returnType = _getText(memberElement.find("type"))
+	# Collect return description before _description() processes the tree.
+	returnDescription = _getReturnDescription(memberElement)
+	brief = _description(memberElement.find("briefdescription"))
+	detail = _description(memberElement.find("detaileddescription"))
+	parameterList = _collectParams(memberElement)
+	syntax = _functionSyntax(memberElement)
+
+	lines: list[str] = [
+		"---",
+		"title: {}".format(functionName),
+		"---",
+		"",
+		"# {}::{}".format(compoundName.rsplit("::", 1)[-1], functionName),
+		"",
+		"**Class:** `{}`".format(compoundName),
+		"",
+	]
+	if brief:
+		lines += [brief, ""]
+
+	lines += ["## Syntax", "", _codeBlock(syntax), ""]
+
+	if parameterList:
+		lines += ["## Parameters", "", _paramsTable(parameterList), ""]
+
+	if returnType and returnType not in ("void", ""):
+		lines += ["## Return Value", ""]
+		if returnDescription:
+			lines += [returnDescription, ""]
+		else:
+			lines += ["`{}`".format(returnType), ""]
+
+	if detail:
+		lines += ["## Remarks", "", detail, ""]
+
+	return "\n".join(lines)
+
+
+def _functionOverloadsPage(
+	memberElements: list[etree._Element],  # type: ignore[name-defined]
+	compoundName: str,
 ) -> str:
-    """Build a Markdown page for a function name, grouping all overloads.
+	"""Build a Markdown page for a function name, grouping all overloads.
 
-    If only one overload exists the output is identical to ``_function_page``.
-    For multiple overloads each one is rendered as a ``### Overload N``
-    subsection under a top-level ``## Overloads`` heading.
-    """
-    if len(members) == 1:
-        return _function_page(members[0], compound_name)
+	If only one overload exists the output is identical to ``_functionPage``.
+	For multiple overloads each one is rendered as a ``### Overload N``
+	subsection under a top-level ``## Overloads`` heading.
+	"""
+	if len(memberElements) == 1:
+		return _functionPage(memberElements[0], compoundName)
 
-    func_name = _text(members[0].find("name"))
-    lines: list[str] = [
-        f"# {func_name} method",
-        "",
-        f"**Class:** `{compound_name}`",
-        "",
-        "## Overloads",
-        "",
-    ]
+	functionName = _getText(memberElements[0].find("name"))
+	lines: list[str] = [
+		"---",
+		"title: {}".format(functionName),
+		"---",
+		"",
+		"# {}::{}".format(compoundName.rsplit("::", 1)[-1], functionName),
+		"",
+		"**Class:** `{}`".format(compoundName),
+		"",
+		"## Overloads",
+		"",
+	]
 
-    for i, member in enumerate(members, 1):
-        brief = _description(member.find("briefdescription"))
-        detail = _description(member.find("detaileddescription"))
-        ret_type = _text(member.find("type"))
-        syntax = _function_syntax(member)
-        params = _collect_params(member)
-        return_desc = _get_return_desc(member)
+	for i, memberElement in enumerate(memberElements, 1):
+		returnType = _getText(memberElement.find("type"))
+		syntax = _functionSyntax(memberElement)
+		parameterList = _collectParams(memberElement)
+		# Collect return description before _description() processes the tree.
+		returnDescription = _getReturnDescription(memberElement)
+		brief = _description(memberElement.find("briefdescription"))
+		detail = _description(memberElement.find("detaileddescription"))
 
-        lines += [f"### Overload {i}", "", _code_block(syntax), ""]
+		lines += ["### Overload {}".format(i), "", _codeBlock(syntax), ""]
 
-        if brief:
-            lines += [brief, ""]
+		if brief:
+			lines += [brief, ""]
 
-        if params:
-            lines += ["**Parameters**", "", _params_table(params), ""]
+		if parameterList:
+			lines += ["**Parameters**", "", _paramsTable(parameterList), ""]
 
-        if ret_type and ret_type not in ("void", ""):
-            lines += ["**Return Value**", ""]
-            if return_desc:
-                lines += [return_desc, ""]
-            else:
-                lines += [f"`{ret_type}`", ""]
+		if returnType and returnType not in ("void", ""):
+			lines += ["**Return Value**", ""]
+			if returnDescription:
+				lines += [returnDescription, ""]
+			else:
+				lines += ["`{}`".format(returnType), ""]
 
-        if detail:
-            lines += ["**Remarks**", "", detail, ""]
+		if detail:
+			lines += ["**Remarks**", "", detail, ""]
 
-    return "\n".join(lines)
-
-
-def _property_page(member: etree._Element, compound_name: str) -> str:  # type: ignore[name-defined]
-    """Build a Markdown page for a UPROPERTY member variable."""
-    var_name = _text(member.find("name"))
-    var_type = _text(member.find("type"))
-    definition = _text(member.find("definition"))
-    brief = _description(member.find("briefdescription"))
-    detail = _description(member.find("detaileddescription"))
-
-    lines: list[str] = [
-        f"# {var_name}",
-        "",
-        f"**Class:** `{compound_name}`",
-        "",
-    ]
-    if brief:
-        lines += [brief, ""]
-
-    syntax = definition if definition else f"{var_type} {var_name}"
-    lines += ["## Declaration", "", _code_block(syntax), ""]
-
-    if detail:
-        lines += ["## Remarks", "", detail, ""]
-
-    return "\n".join(lines)
+	return "\n".join(lines)
 
 
-def _class_declaration(compound: etree._Element, class_name: str) -> str:  # type: ignore[name-defined]
-    """Build the C++ class/struct declaration line for the Syntax section."""
-    kind = compound.get("kind", "class")
-    short_name = class_name.rsplit("::", 1)[-1]
-    bases = []
-    for base in compound.findall("basecompoundref"):
-        prot = base.get("prot", "public")
-        name = (base.text or "").strip()
-        if name:
-            bases.append(f"{prot} {name}")
-    base_str = " : " + ", ".join(bases) if bases else ""
-    return f"{kind} {short_name}{base_str}"
+def _propertyPage(memberElement: etree._Element, compoundName: str) -> str:  # type: ignore[name-defined]
+	"""Build a Markdown page for a UPROPERTY member variable."""
+	variableName = _getText(memberElement.find("name"))
+	variableType = _getText(memberElement.find("type"))
+	definition = _getText(memberElement.find("definition"))
+	brief = _description(memberElement.find("briefdescription"))
+	detail = _description(memberElement.find("detaileddescription"))
+
+	lines: list[str] = [
+		"---",
+		"title: {}".format(variableName),
+		"---",
+		"",
+		"# {}::{}".format(compoundName.rsplit("::", 1)[-1], variableName),
+		"",
+		"**Class:** `{}`".format(compoundName),
+		"",
+	]
+	if brief:
+		lines += [brief, ""]
+
+	syntax = definition if definition else "{} {}".format(variableType, variableName)
+	lines += ["## Declaration", "", _codeBlock(syntax), ""]
+
+	if detail:
+		lines += ["## Remarks", "", detail, ""]
+
+	return "\n".join(lines)
 
 
-def _members_table(entries: list[tuple[str, str]], kind: str = "Method") -> str:
-    """Render a Markdown table of member links and brief descriptions.
-
-    *entries* is a list of ``(name, brief)`` pairs; *kind* controls the first
-    column header (``"Method"`` or ``"Property"``).
-    """
-    if not entries:
-        return ""
-    rows = [
-        f"| {kind} | Description |",
-        "|--------|-------------|",
-    ]
-    for name, brief in entries:
-        rows.append(f"| [{name}]({name}.md) | {brief} |")
-    return "\n".join(rows)
+def _classDeclaration(compoundElement: etree._Element, className: str) -> str:  # type: ignore[name-defined]
+	"""Build the C++ class/struct declaration line for the Syntax section."""
+	kind = compoundElement.get("kind", "class")
+	shortName = className.rsplit("::", 1)[-1]
+	basesList: list[str] = []
+	for baseElement in compoundElement.findall("basecompoundref"):
+		protection = baseElement.get("prot", "public")
+		baseName = (baseElement.text or "").strip()
+		if baseName:
+			basesList.append("{} {}".format(protection, baseName))
+	baseString = " : " + ", ".join(basesList) if basesList else ""
+	return "{} {}{}".format(kind, shortName, baseString)
 
 
-def _class_index_page(
-    compound: etree._Element,  # type: ignore[name-defined]
-    class_name: str,
-    function_briefs: dict[str, str],
-    property_briefs: dict[str, str],
+def _classIndexPage(
+	compoundElement: etree._Element,  # type: ignore[name-defined]
+	className: str,
+	functionBriefs: dict[str, str],
+	functionSignatures: dict[str, list[str]],
+	propertyBriefs: dict[str, str],
+	propertyTypes: dict[str, str],
+	delegateBriefs: dict[str, str],
+	delegateTypes: dict[str, str],
 ) -> str:
-    """Build the index page for a class / struct."""
-    brief = _description(compound.find("briefdescription"))
-    detail = _description(compound.find("detaileddescription"))
+	"""Build the index page for a class / struct."""
+	brief = _description(compoundElement.find("briefdescription"))
+	detail = _description(compoundElement.find("detaileddescription"))
 
-    lines: list[str] = [f"# {class_name}", ""]
+	lines: list[str] = ["# {}".format(className), ""]
 
-    if brief:
-        lines += [brief, ""]
+	if brief:
+		lines += [brief, ""]
 
-    lines += ["## Syntax", "", _code_block(_class_declaration(compound, class_name)), ""]
+	lines += ["## Syntax", "", _codeBlock(_classDeclaration(compoundElement, className)), ""]
 
-    if detail:
-        lines += ["## Remarks", "", detail, ""]
+	if detail:
+		lines += ["## Remarks", "", detail, ""]
 
-    if function_briefs:
-        func_entries = [(name, function_briefs[name]) for name in sorted(function_briefs)]
-        lines += ["## Methods", "", _members_table(func_entries, "Method"), ""]
+	if functionBriefs:
+		rows = [
+			"| Method | Signature | Description |",
+			"|--------|-----------|-------------|",
+		]
+		for name in sorted(functionBriefs):
+			signatureCell = "<br>".join("`{}`".format(sig) for sig in functionSignatures.get(name, []))
+			rows.append("| [{}]({}.md) | {} | {} |".format(name, name, signatureCell, functionBriefs[name]))
+		lines += ["## Methods", "", "\n".join(rows), ""]
 
-    if property_briefs:
-        prop_entries = [(name, property_briefs[name]) for name in sorted(property_briefs)]
-        lines += ["## Properties", "", _members_table(prop_entries, "Property"), ""]
+	if propertyBriefs:
+		rows = [
+			"| Property | Type | Description |",
+			"|----------|------|-------------|",
+		]
+		for name in sorted(propertyBriefs):
+			rows.append("| [{}]({}.md) | `{}` | {} |".format(name, name, propertyTypes.get(name, ""), propertyBriefs[name]))
+		lines += ["## Properties", "", "\n".join(rows), ""]
 
-    return "\n".join(lines)
+	if delegateBriefs:
+		rows = [
+			"| Delegate | Type | Description |",
+			"|----------|------|-------------|",
+		]
+		for name in sorted(delegateBriefs):
+			rows.append("| [{}]({}.md) | `{}` | {} |".format(name, name, delegateTypes.get(name, ""), delegateBriefs[name]))
+		lines += ["## Delegates", "", "\n".join(rows), ""]
+
+	return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # Compound processor
 # ---------------------------------------------------------------------------
 
-_MEMBER_KINDS_FUNC = {"function"}
-_MEMBER_KINDS_VAR = {"variable"}
+_MEMBER_KINDS_FUNCTION = {"function"}
+_MEMBER_KINDS_VARIABLE = {"variable"}
 
 
-def process_compound(xml_path: Path, output_dir: Path) -> str:
-    """Process one Doxygen compound XML file.  Returns the compound name."""
-    tree = etree.parse(str(xml_path))
-    root = tree.getroot()
+def _isDelegateType(variableType: str) -> bool:
+	"""Return True if variableType looks like a UE delegate type.
 
-    compound_el = root.find("compounddef")
-    if compound_el is None:
-        return ""
+	Matches the two dominant UE naming conventions: types that contain the
+	word ``Delegate`` (e.g. ``FSetDisplayTextDelegate``) and types that begin
+	with ``FOn`` (e.g. ``FOnEnumerateStreamsComplete``).
+	"""
+	return "Delegate" in variableType or variableType.startswith("FOn")
 
-    kind = compound_el.get("kind", "")
-    if kind not in ("class", "struct", "namespace", "file"):
-        return ""
 
-    compound_name = _text(compound_el.find("compoundname"))
-    # Use the last component for the directory name (strip namespace prefix)
-    short_name = compound_name.rsplit("::", 1)[-1]
+def _extractPluginName(compoundElement: etree._Element) -> str | None:  # type: ignore[name-defined]
+	"""Extract the plugin name from the compound's ``<location>`` element.
 
-    class_dir = output_dir / short_name
-    class_dir.mkdir(parents=True, exist_ok=True)
+	Looks for a ``Source`` directory in the file path and returns the path
+	component immediately before it.  This works for both standard Unreal
+	layouts (``Plugins/<Plugin>/Source/...``) and custom ones such as
+	``<RootDir>/<Plugin>/Source/...``.  Returns ``None`` when no ``Source``
+	segment is found or when ``Source`` is the first path component.
+	"""
+	locationElement = compoundElement.find("location")
+	if locationElement is None:
+		return None
+	filePath = locationElement.get("file", "").replace("\\", "/")
+	pathComponents = filePath.split("/")
+	try:
+		sourceIndex = pathComponents.index("Source")
+	except ValueError:
+		return None
+	if sourceIndex == 0:
+		return None
+	return pathComponents[sourceIndex - 1]
 
-    # Group function members by name to merge overloads onto one page.
-    # Insertion order is preserved so the page order matches the header file.
-    func_groups: dict[str, list[etree._Element]] = {}  # type: ignore[name-defined]
-    func_briefs: dict[str, str] = {}
-    property_briefs: dict[str, str] = {}
 
-    for member in compound_el.iter("memberdef"):
-        m_kind = member.get("kind", "")
-        m_prot = member.get("prot", "public")
-        if m_prot not in ("public", "protected"):
-            continue
+def processCompound(
+	xmlPath: Path, outputDirectory: Path
+) -> tuple[str, str, str, str | None] | None:
+	"""Process one Doxygen compound XML file.
 
-        name = _text(member.find("name"))
-        if not name:
-            continue
+	Returns ``(compoundName, compoundBrief, compoundKind, pluginName)`` on
+	success, or ``None`` for compound kinds that are skipped (e.g. namespaces,
+	raw files).  ``pluginName`` is ``None`` when the compound does not belong
+	to a plugin.
+	"""
+	tree = etree.parse(str(xmlPath))
+	root = tree.getroot()
 
-        if m_kind in _MEMBER_KINDS_FUNC:
-            func_groups.setdefault(name, []).append(member)
-            # Record the brief of the first overload for the class index table.
-            if name not in func_briefs:
-                func_briefs[name] = _description(member.find("briefdescription"))
-        elif m_kind in _MEMBER_KINDS_VAR:
-            brief = _description(member.find("briefdescription"))
-            page = _property_page(member, compound_name)
-            (class_dir / f"{name}.md").write_text(page, encoding="utf-8")
-            property_briefs[name] = brief
+	compoundElement = root.find("compounddef")
+	if compoundElement is None:
+		return None
 
-    for func_name, overloads in func_groups.items():
-        page = _function_overloads_page(overloads, compound_name)
-        (class_dir / f"{func_name}.md").write_text(page, encoding="utf-8")
+	kind = compoundElement.get("kind", "")
+	if kind not in ("class", "struct", "enum", "namespace"):
+		return None
 
-    index_page = _class_index_page(
-        compound_el, compound_name, func_briefs, property_briefs
-    )
-    (class_dir / "index.md").write_text(index_page, encoding="utf-8")
+	compoundName = _getText(compoundElement.find("compoundname"))
+	if kind == "namespace" and (compoundName == "std" or compoundName.startswith("std::")):
+		return None
+	# Use the last component for the directory name (strip namespace prefix).
+	shortName = compoundName.rsplit("::", 1)[-1]
+	pluginName = _extractPluginName(compoundElement)
 
-    return compound_name
+	if pluginName:
+		classDirectory = outputDirectory / pluginName / shortName
+	else:
+		classDirectory = outputDirectory / shortName
+	classDirectory.mkdir(parents=True, exist_ok=True)
+
+	# Group function members by name to merge overloads onto one page.
+	# Insertion order is preserved so the page order matches the header file.
+	functionGroups: dict[str, list[etree._Element]] = {}  # type: ignore[name-defined]
+	functionBriefs: dict[str, str] = {}
+	functionSignatures: dict[str, list[str]] = {}
+	propertyBriefs: dict[str, str] = {}
+	propertyTypes: dict[str, str] = {}
+	delegateBriefs: dict[str, str] = {}
+	delegateTypes: dict[str, str] = {}
+
+	for memberElement in compoundElement.iter("memberdef"):
+		memberKind = memberElement.get("kind", "")
+		memberProtection = memberElement.get("prot", "public")
+		if memberProtection not in ("public", "protected"):
+			continue
+
+		name = _getText(memberElement.find("name"))
+		if not name:
+			continue
+
+		if memberKind in _MEMBER_KINDS_FUNCTION:
+			functionGroups.setdefault(name, []).append(memberElement)
+			# Record the brief of the first overload for the class index table.
+			if name not in functionBriefs:
+				functionBriefs[name] = _description(memberElement.find("briefdescription"))
+			functionSignatures.setdefault(name, []).append(_functionSyntax(memberElement))
+		elif memberKind in _MEMBER_KINDS_VARIABLE:
+			brief = _description(memberElement.find("briefdescription"))
+			variableType = _getText(memberElement.find("type"))
+			page = _propertyPage(memberElement, compoundName)
+			(classDirectory / "{}.md".format(name)).write_text(page, encoding="utf-8")
+			if _isDelegateType(variableType):
+				delegateBriefs[name] = brief
+				delegateTypes[name] = variableType
+			else:
+				propertyBriefs[name] = brief
+				propertyTypes[name] = variableType
+
+	for functionName, overloads in functionGroups.items():
+		page = _functionOverloadsPage(overloads, compoundName)
+		(classDirectory / "{}.md".format(functionName)).write_text(page, encoding="utf-8")
+
+	# Capture the compound brief before _classIndexPage consumes it via _description().
+	compoundBrief = _description(compoundElement.find("briefdescription"))
+
+	indexPage = _classIndexPage(
+		compoundElement, compoundName,
+		functionBriefs, functionSignatures,
+		propertyBriefs, propertyTypes,
+		delegateBriefs, delegateTypes,
+	)
+	(classDirectory / "index.md").write_text(indexPage, encoding="utf-8")
+
+	return compoundName, compoundBrief, kind, pluginName
 
 
 # ---------------------------------------------------------------------------
-# Top-level index
+# Plugin and top-level indexes
 # ---------------------------------------------------------------------------
 
-def _write_top_index(output_dir: Path, compound_names: list[str]) -> None:
-    lines: list[str] = [
-        "# API Reference",
-        "",
-        "Generated by [Unreal-Doxygen](https://github.com/candytaco/Unreal-Doxygen).",
-        "",
-        "## API Index",
-        "",
-    ]
-    for name in sorted(compound_names):
-        short = name.rsplit("::", 1)[-1]
-        lines.append(f"- [{name}]({short}/index.md)")
-    lines.append("")
-    (output_dir / "index.md").write_text("\n".join(lines), encoding="utf-8")
+def _writePluginIndex(
+	pluginDirectory: Path,
+	pluginName: str,
+	compoundEntries: list[tuple[str, str, str]],
+) -> None:
+	"""Write an MSDN-style index page listing all compounds in a plugin."""
+	lines: list[str] = ["# {} plugin".format(pluginName), ""]
+
+	sectionConfig = [
+		("class",  "## Classes"),
+		("struct", "## Structs"),
+		("enum",   "## Enums"),
+	]
+	for kindFilter, sectionHeader in sectionConfig:
+		filtered = sorted(
+			[(name, brief) for name, brief, kind in compoundEntries if kind == kindFilter],
+			key = lambda entry: entry[0],
+		)
+		if not filtered:
+			continue
+		tableRows = [
+			"| {} | Description |".format(kindFilter.capitalize()),
+			"|-------|-------------|",
+		]
+		for name, brief in filtered:
+			shortName = name.rsplit("::", 1)[-1]
+			tableRows.append("| [{}]({}/index.md) | {} |".format(name, shortName, brief))
+		lines += [sectionHeader, "", "\n".join(tableRows), ""]
+
+	(pluginDirectory / "index.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _writeTopIndex(
+	outputDirectory: Path,
+	pluginMap: dict[str | None, list[tuple[str, str, str]]],
+	pluginDescriptions: dict[str, str],
+) -> None:
+	"""Write the root index page, organised by plugin then by loose class."""
+	lines: list[str] = [
+		"# API Reference",
+		"",
+		"Generated by [Unreal-Doxygen](https://github.com/candytaco/Unreal-Doxygen).",
+		"",
+	]
+
+	for pluginName in sorted(name for name in pluginMap if name is not None):
+		lines.append("## [{} plugin]({}/index.md)".format(pluginName, pluginName))
+		lines.append("")
+		description = pluginDescriptions.get(pluginName, "")
+		if description:
+			lines += [description, ""]
+
+	nonPluginEntries = pluginMap.get(None, [])
+	if nonPluginEntries:
+		lines += ["## Classes", ""]
+		for name in sorted(entry[0] for entry in nonPluginEntries):
+			shortName = name.rsplit("::", 1)[-1]
+			lines.append("- [{}]({}/index.md)".format(name, shortName))
+		lines.append("")
+
+	(outputDirectory / "index.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def convert(xml_dir: Path, output_dir: Path) -> None:
-    """Convert all compound XML files in *xml_dir* to Markdown in *output_dir*."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+def convert(xmlDirectory: Path, outputDirectory: Path) -> None:
+	"""Convert all compound XML files in xmlDirectory to Markdown in outputDirectory."""
+	outputDirectory.mkdir(parents=True, exist_ok=True)
 
-    compound_names: list[str] = []
-    xml_files = list(xml_dir.glob("*.xml"))
-    if not xml_files:
-        print(
-            f"warning: no XML files found in {xml_dir}",
-            file=sys.stderr,
-        )
-        return
+	# Maps plugin name (or None for non-plugin compounds) to (compoundName, brief, kind) triples.
+	pluginMap: dict[str | None, list[tuple[str, str, str]]] = {}
+	pluginDescriptions: dict[str, str] = {}
 
-    for xml_file in sorted(xml_files):
-        if xml_file.name in ("index.xml", "Doxyfile.xml"):
-            continue
-        name = process_compound(xml_file, output_dir)
-        if name:
-            compound_names.append(name)
-            print(f"  converted: {xml_file.name} → {name}")
+	xmlFiles = list(xmlDirectory.glob("*.xml"))
+	if not xmlFiles:
+		print(
+			"warning: no XML files found in {}".format(xmlDirectory),
+			file=sys.stderr,
+		)
+		return
 
-    _write_top_index(output_dir, compound_names)
-    print(f"\nWrote {len(compound_names)} compound(s) to {output_dir}/")
+	for xmlFile in sorted(xmlFiles):
+		if xmlFile.name in ("index.xml", "Doxyfile.xml"):
+			continue
+		result = processCompound(xmlFile, outputDirectory)
+		if result is not None:
+			compoundName, compoundBrief, compoundKind, pluginName = result
+			pluginMap.setdefault(pluginName, []).append((compoundName, compoundBrief, compoundKind))
+			print("  converted: {} → {}".format(xmlFile.name, compoundName))
+
+	# Derive plugin descriptions from the FXxxModule compound brief.
+	# Unreal Engine module classes follow the IModuleInterface convention and
+	# their names end with "Module" (e.g. FEyelinkModule, FMRIExperimentModule).
+	for pluginName, entries in pluginMap.items():
+		if pluginName is None:
+			continue
+		for compoundName, compoundBrief, compoundKind in entries:
+			shortName = compoundName.rsplit("::", 1)[-1]
+			if compoundKind == "class" and shortName.endswith("Module") and compoundBrief:
+				pluginDescriptions[pluginName] = compoundBrief
+				break
+
+	for pluginName, compoundEntries in pluginMap.items():
+		if pluginName is not None:
+			_writePluginIndex(outputDirectory / pluginName, pluginName, compoundEntries)
+
+	_writeTopIndex(outputDirectory, pluginMap, pluginDescriptions)
+
+	totalCount = sum(len(names) for names in pluginMap.values())
+	print("\nWrote {} compound(s) to {}/".format(totalCount, outputDirectory))
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Convert Doxygen XML output to per-page Markdown."
-    )
-    parser.add_argument(
-        "--xml-dir",
-        metavar="DIR",
-        default="docs/xml",
-        help="Directory containing Doxygen XML output (default: docs/xml)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        metavar="DIR",
-        default="docs/md",
-        help="Directory to write Markdown files to (default: docs/md)",
-    )
-    args = parser.parse_args(argv)
+	parser = argparse.ArgumentParser(
+		description = "Convert Doxygen XML output to per-page Markdown."
+	)
+	parser.add_argument(
+		"--xml-dir",
+		metavar = "DIR",
+		default = "docs/xml",
+		help = "Directory containing Doxygen XML output (default: docs/xml)",
+	)
+	parser.add_argument(
+		"--output-dir",
+		metavar = "DIR",
+		default = "docs/md",
+		help = "Directory to write Markdown files to (default: docs/md)",
+	)
+	args = parser.parse_args(argv)
 
-    xml_dir = Path(args.xml_dir)
-    output_dir = Path(args.output_dir)
+	xmlDirectory = Path(args.xml_dir)
+	outputDirectory = Path(args.output_dir)
 
-    if not xml_dir.exists():
-        print(f"error: XML directory not found: {xml_dir}", file=sys.stderr)
-        sys.exit(1)
+	if not xmlDirectory.exists():
+		print("error: XML directory not found: {}".format(xmlDirectory), file=sys.stderr)
+		sys.exit(1)
 
-    convert(xml_dir, output_dir)
+	convert(xmlDirectory, outputDirectory)
 
 
 if __name__ == "__main__":
-    main()
+	main()
