@@ -1,0 +1,116 @@
+# =============================================================================
+# mkdocs.yml — Zensical site configuration for Unreal-Doxygen
+#
+# This file configures Zensical (https://zensical.org) to build a professional
+# static documentation site from the Markdown files produced by
+# xml_to_markdown.py.
+#
+# Quick start
+# -----------
+#   pip install zensical
+#   zensical serve      # live-preview at http://localhost:8000
+#   zensical build      # build static site → site/
+#   zensical gh-deploy  # publish to GitHub Pages
+#
+# The full pipeline
+# -----------------
+#   doxygen Doxyfile                    # 1. run Doxygen (calls preprocess.py)
+#   python3 xml_to_markdown.py          # 2. convert XML → docs/md/
+#   zensical build                      # 3. build static site
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Project information
+# ---------------------------------------------------------------------------
+site_name: "My Unreal Engine API Reference"
+site_description: "Generated API reference for My Unreal Engine project."
+site_url: ""   # set to your published URL, e.g. https://myorg.github.io/myproject/
+
+# ---------------------------------------------------------------------------
+# Repository  (optional — shows an "Edit on GitHub" link)
+# ---------------------------------------------------------------------------
+# repo_name: myorg/myproject
+# repo_url: https://github.com/myorg/myproject
+
+# ---------------------------------------------------------------------------
+# Source directory
+# xml_to_markdown.py writes its output to docs/md/ by default; adjust if you
+# use a custom --output-dir.
+# ---------------------------------------------------------------------------
+docs_dir: docs/md
+site_dir: site
+
+# ---------------------------------------------------------------------------
+# Theme  (Material for Zensical)
+# ---------------------------------------------------------------------------
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: lucide/sun
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: orange
+      toggle:
+        icon: lucide/moon-star
+        name: Switch to light mode
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+plugins:
+  - search
+
+# ---------------------------------------------------------------------------
+# Markdown extensions
+# ---------------------------------------------------------------------------
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+# ---------------------------------------------------------------------------
+# Navigation
+#
+# Leave nav commented out to let Zensical auto-generate it from the directory
+# structure produced by xml_to_markdown.py.  You can un-comment and customise
+# it once you know which classes / functions are in your project.
+#
+# Example (generated layout):
+#
+#   nav:
+#     - Home: index.md
+#     - ACombatActor:
+#       - Overview: ACombatActor/index.md
+#       - ApplyDamage: ACombatActor/ApplyDamage.md
+#       - MaxHealth: ACombatActor/MaxHealth.md
+# ---------------------------------------------------------------------------
+# nav:
+#   - Home: index.md
