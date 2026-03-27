@@ -184,7 +184,7 @@ def _function_page(member: etree._Element, compound_name: str) -> str:  # type: 
     syntax = _function_syntax(member)
 
     lines: list[str] = [
-        f"# {func_name}",
+        f"# {func_name} method",
         "",
         f"**Class:** `{compound_name}`",
         "",
@@ -225,7 +225,7 @@ def _function_overloads_page(
 
     func_name = _text(members[0].find("name"))
     lines: list[str] = [
-        f"# {func_name}",
+        f"# {func_name} method",
         "",
         f"**Class:** `{compound_name}`",
         "",
@@ -288,40 +288,64 @@ def _property_page(member: etree._Element, compound_name: str) -> str:  # type: 
     return "\n".join(lines)
 
 
+def _class_declaration(compound: etree._Element, class_name: str) -> str:  # type: ignore[name-defined]
+    """Build the C++ class/struct declaration line for the Syntax section."""
+    kind = compound.get("kind", "class")
+    short_name = class_name.rsplit("::", 1)[-1]
+    bases = []
+    for base in compound.findall("basecompoundref"):
+        prot = base.get("prot", "public")
+        name = (base.text or "").strip()
+        if name:
+            bases.append(f"{prot} {name}")
+    base_str = " : " + ", ".join(bases) if bases else ""
+    return f"{kind} {short_name}{base_str}"
+
+
+def _members_table(entries: list[tuple[str, str]], kind: str = "Method") -> str:
+    """Render a Markdown table of member links and brief descriptions.
+
+    *entries* is a list of ``(name, brief)`` pairs; *kind* controls the first
+    column header (``"Method"`` or ``"Property"``).
+    """
+    if not entries:
+        return ""
+    rows = [
+        f"| {kind} | Description |",
+        "|--------|-------------|",
+    ]
+    for name, brief in entries:
+        rows.append(f"| [{name}]({name}.md) | {brief} |")
+    return "\n".join(rows)
+
+
 def _class_index_page(
     compound: etree._Element,  # type: ignore[name-defined]
     class_name: str,
-    function_names: list[str],
-    property_names: list[str],
+    function_briefs: dict[str, str],
+    property_briefs: dict[str, str],
 ) -> str:
     """Build the index page for a class / struct."""
     brief = _description(compound.find("briefdescription"))
     detail = _description(compound.find("detaileddescription"))
-    kind = compound.get("kind", "class").capitalize()
 
-    lines: list[str] = [
-        f"# {class_name}",
-        "",
-        f"**Type:** {kind}",
-        "",
-    ]
+    lines: list[str] = [f"# {class_name}", ""]
+
     if brief:
         lines += [brief, ""]
 
-    if function_names:
-        lines += ["## Member Functions", ""]
-        for fn in sorted(function_names):
-            lines.append(f"- [{fn}]({fn}.md)")
-        lines.append("")
-
-    if property_names:
-        lines += ["## Properties", ""]
-        for pn in sorted(property_names):
-            lines.append(f"- [{pn}]({pn}.md)")
-        lines.append("")
+    lines += ["## Syntax", "", _code_block(_class_declaration(compound, class_name)), ""]
 
     if detail:
         lines += ["## Remarks", "", detail, ""]
+
+    if function_briefs:
+        func_entries = [(name, function_briefs[name]) for name in sorted(function_briefs)]
+        lines += ["## Methods", "", _members_table(func_entries, "Method"), ""]
+
+    if property_briefs:
+        prop_entries = [(name, property_briefs[name]) for name in sorted(property_briefs)]
+        lines += ["## Properties", "", _members_table(prop_entries, "Property"), ""]
 
     return "\n".join(lines)
 
@@ -357,7 +381,8 @@ def process_compound(xml_path: Path, output_dir: Path) -> str:
     # Group function members by name to merge overloads onto one page.
     # Insertion order is preserved so the page order matches the header file.
     func_groups: dict[str, list[etree._Element]] = {}  # type: ignore[name-defined]
-    property_names: list[str] = []
+    func_briefs: dict[str, str] = {}
+    property_briefs: dict[str, str] = {}
 
     for member in compound_el.iter("memberdef"):
         m_kind = member.get("kind", "")
@@ -371,19 +396,21 @@ def process_compound(xml_path: Path, output_dir: Path) -> str:
 
         if m_kind in _MEMBER_KINDS_FUNC:
             func_groups.setdefault(name, []).append(member)
+            # Record the brief of the first overload for the class index table.
+            if name not in func_briefs:
+                func_briefs[name] = _description(member.find("briefdescription"))
         elif m_kind in _MEMBER_KINDS_VAR:
+            brief = _description(member.find("briefdescription"))
             page = _property_page(member, compound_name)
             (class_dir / f"{name}.md").write_text(page, encoding="utf-8")
-            property_names.append(name)
+            property_briefs[name] = brief
 
     for func_name, overloads in func_groups.items():
         page = _function_overloads_page(overloads, compound_name)
         (class_dir / f"{func_name}.md").write_text(page, encoding="utf-8")
 
-    function_names = list(func_groups.keys())
-
     index_page = _class_index_page(
-        compound_el, compound_name, function_names, property_names
+        compound_el, compound_name, func_briefs, property_briefs
     )
     (class_dir / "index.md").write_text(index_page, encoding="utf-8")
 
