@@ -417,10 +417,11 @@ def process_content(content: str) -> str:
                 span.span_start += delta
                 span.span_end += delta
             else:  # line
+                old_len = len(content)
                 content = _inject_into_line_comment(content, c_end, injection)
-                extra = len(f"\n/// {injection}")
-                span.span_start += extra
-                span.span_end += extra
+                delta = len(content) - old_len
+                span.span_start += delta
+                span.span_end += delta
 
         # 2. Comment out the macro
         macro_text = content[span.span_start : span.span_end]
