@@ -401,6 +401,88 @@ def _propertyPage(memberElement: etree._Element, compoundName: str) -> str:  # t
 	return "\n".join(lines)
 
 
+def _getBaseClassInfo(compoundElement: etree._Element) -> tuple[list[str], list[str]]:  # type: ignore[name-defined]
+	"""Return (baseClasses, interfaces) from the compound's basecompoundref elements.
+
+	Base classes that follow UE interface naming — short name starting with ``I``
+	followed by an uppercase letter — are classified as interfaces; all others
+	are classified as regular base classes.
+	"""
+	baseClasses: list[str] = []
+	interfaces: list[str] = []
+	for baseElement in compoundElement.findall("basecompoundref"):
+		baseName = (baseElement.text or "").strip()
+		if not baseName:
+			continue
+		shortName = baseName.rsplit("::", 1)[-1]
+		if len(shortName) >= 2 and shortName[0] == "I" and shortName[1].isupper():
+			interfaces.append(baseName)
+		else:
+			baseClasses.append(baseName)
+	return baseClasses, interfaces
+
+
+def _getDerivedClasses(compoundElement: etree._Element) -> list[str]:  # type: ignore[name-defined]
+	"""Return the list of derived class names from the compound's derivedcompoundref elements."""
+	derivedClasses: list[str] = []
+	for derivedElement in compoundElement.findall("derivedcompoundref"):
+		derivedName = (derivedElement.text or "").strip()
+		if derivedName:
+			derivedClasses.append(derivedName)
+	return derivedClasses
+
+
+def _buildInheritanceMap(xmlFiles: list[Path]) -> dict[str, list[str]]:
+	"""Build a map from compound name to its non-interface base class names.
+
+	Reads every XML file in xmlFiles so that the full cross-file inheritance
+	graph is available before any page is rendered.
+	"""
+	inheritanceMap: dict[str, list[str]] = {}
+	for xmlFile in xmlFiles:
+		if xmlFile.name in ("index.xml", "Doxyfile.xml"):
+			continue
+		try:
+			tree = etree.parse(str(xmlFile))
+		except etree.XMLSyntaxError:
+			continue
+		root = tree.getroot()
+		compoundElement = root.find("compounddef")
+		if compoundElement is None:
+			continue
+		compoundName = _getText(compoundElement.find("compoundname"))
+		if not compoundName:
+			continue
+		baseClasses, _ = _getBaseClassInfo(compoundElement)
+		inheritanceMap[compoundName] = baseClasses
+	return inheritanceMap
+
+
+def _buildInheritanceChain(className: str, inheritanceMap: dict[str, list[str]], maxDepth: int = 20) -> list[str]:
+	"""Walk inheritanceMap from className to the root ancestor.
+
+	Returns the chain ordered from oldest ancestor to className, e.g.
+	``["UObject", "UActorComponent", "UMyComponent"]``.  Follows the first
+	(primary) base class at each level.  Stops at maxDepth to guard against
+	cycles.
+	"""
+	chain: list[str] = [className]
+	visited: set[str] = {className}
+	current = className
+	for _ in range(maxDepth):
+		bases = inheritanceMap.get(current, [])
+		if not bases:
+			break
+		parent = bases[0]
+		if parent in visited:
+			break
+		chain.append(parent)
+		visited.add(parent)
+		current = parent
+	chain.reverse()
+	return chain
+
+
 def _classDeclaration(compoundElement: etree._Element, className: str) -> str:  # type: ignore[name-defined]
 	"""Build the C++ class/struct declaration line for the Syntax section."""
 	kind = compoundElement.get("kind", "class")
@@ -429,6 +511,7 @@ def _classIndexPage(
 	delegateBriefs: dict[str, str],
 	delegateTypes: dict[str, str],
 	delegateBlueprintAccessible: dict[str, bool],
+	inheritanceChain: list[str],
 ) -> str:
 	"""Build the index page for a class / struct."""
 	lines: list[str] = ["# {}".format(className), ""]
@@ -444,6 +527,25 @@ def _classIndexPage(
 	classBlueprintText = _blueprintSection(_getBlueprintInfo(compoundElement))
 	if classBlueprintText:
 		lines += [classBlueprintText, ""]
+
+	_, interfaces = _getBaseClassInfo(compoundElement)
+	derivedClasses = _getDerivedClasses(compoundElement)
+
+	if len(inheritanceChain) > 1:
+		lines += ["## Inheritance Hierarchy", ""]
+		lines += [" → ".join("`{}`".format(name) for name in inheritanceChain), ""]
+
+	if interfaces:
+		lines += ["## Interfaces Implemented", ""]
+		for interfaceName in interfaces:
+			lines.append("- `{}`".format(interfaceName))
+		lines.append("")
+
+	if derivedClasses:
+		lines += ["## Derived Classes", ""]
+		for derivedName in derivedClasses:
+			lines.append("- `{}`".format(derivedName))
+		lines.append("")
 
 	if functionBriefs:
 		rows = [
@@ -521,7 +623,7 @@ def _extractPluginName(compoundElement: etree._Element) -> str | None:  # type: 
 
 
 def processCompound(
-	xmlPath: Path, outputDirectory: Path
+	xmlPath: Path, outputDirectory: Path, inheritanceMap: dict[str, list[str]]
 ) -> tuple[str, str, str, str, str | None] | None:
 	"""Process one Doxygen compound XML file.
 
@@ -611,12 +713,14 @@ def processCompound(
 	compoundBrief = _description(compoundElement.find("briefdescription"))
 	compoundDetail = _description(compoundElement.find("detaileddescription"))
 
+	inheritanceChain = _buildInheritanceChain(compoundName, inheritanceMap)
 	indexPage = _classIndexPage(
 		compoundElement, compoundName,
 		compoundBrief, compoundDetail,
 		functionBriefs, functionSignatures, functionBlueprintAccessible,
 		propertyBriefs, propertyTypes, propertyBlueprintAccessible,
 		delegateBriefs, delegateTypes, delegateBlueprintAccessible,
+		inheritanceChain,
 	)
 	(classDirectory / "index.md").write_text(indexPage, encoding="utf-8")
 
@@ -716,10 +820,14 @@ def convert(xmlDirectory: Path, outputDirectory: Path) -> None:
 		)
 		return
 
+	# Pre-pass: build the full cross-file inheritance map so each class page
+	# can render its complete ancestor chain, not just its direct parent.
+	inheritanceMap = _buildInheritanceMap(xmlFiles)
+
 	for xmlFile in sorted(xmlFiles):
 		if xmlFile.name in ("index.xml", "Doxyfile.xml"):
 			continue
-		result = processCompound(xmlFile, outputDirectory)
+		result = processCompound(xmlFile, outputDirectory, inheritanceMap)
 		if result is not None:
 			compoundName, compoundBrief, compoundDetail, compoundKind, pluginName = result
 			pluginMap.setdefault(pluginName, []).append((compoundName, compoundBrief, compoundDetail, compoundKind))
